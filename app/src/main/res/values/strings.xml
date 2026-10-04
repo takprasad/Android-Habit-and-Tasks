@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Habit &amp; Task Tracker</string>
+    <string name="title_activity_main">Habit &amp; Task Tracker</string>
+    <string name="package_name">com.example.habittracker</string>
+    <string name="custom_url_scheme">com.example.habittracker</string>
+</resources>
