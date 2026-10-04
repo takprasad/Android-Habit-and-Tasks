@@ -116,7 +116,7 @@ function vToday() {
   <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
   ${d.habits.map((h) => habitCard(h, 'hd')).join('') || '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
   <div class=lbl>Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
-  <div class=card>${tasksContent}
+  <div class=card><div class="task-list-scroll">${tasksContent}</div>
   ${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
 }
 function vHabits() {
