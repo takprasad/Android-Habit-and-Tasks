@@ -78,14 +78,45 @@ function taskRow(k) {
 
 /* ---------- views ---------- */
 function vToday() {
-  const t = today(), d = L.dashboard(S);
+  const t = today(), tm = add(t, 1), d = L.dashboard(S), openTasks = S.tasks.filter(isOpen);
+  const dueToday = openTasks.filter((k) => k.due && k.due <= t), over = openTasks.filter(overdue);
+
+  const getGroupLabel = (d) => {
+    if (!d) return 'Anytime · no deadline';
+    if (d <= t) return 'Today';
+    if (d === tm) return 'Tomorrow';
+    return L.P(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  const sortedTasks = openTasks.slice().sort((a, b) => {
+    if (a.due && b.due) return a.due < b.due ? -1 : a.due > b.due ? 1 : (a.time || '99') < (b.time || '99') ? -1 : (a.time || '99') > (b.time || '99') ? 1 : L.PR[a.pri] - L.PR[b.pri];
+    if (a.due) return -1;
+    if (b.due) return 1;
+    return L.PR[a.pri] - L.PR[b.pri];
+  });
+
+  const taskGroups = new Map();
+  for (const k of sortedTasks) {
+    const label = getGroupLabel(k.due);
+    if (!taskGroups.has(label)) taskGroups.set(label, []);
+    taskGroups.get(label).push(k);
+  }
+
+  let tasksContent = '';
+  if (openTasks.length === 0) {
+    tasksContent = '<div class=mu style="text-align:center;padding:10px">Nothing due today<br><br><button class="btn sm" data-a=nt>Add task</button></div>';
+  } else {
+    for (const [label, list] of taskGroups) {
+      tasksContent += `<div class=lbl>${esc(label)}</div>${list.map(taskRow).join('')}`;
+    }
+  }
+
   return `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1>
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
   <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
   ${d.habits.map((h) => habitCard(h, 'hd')).join('') || '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
-  <div class=lbl>Tasks · ${d.dueL.filter((k) => k.due === t).length} due today, ${d.dueL.filter(overdue).length} overdue</div>
-  <div class=card>${d.dueL.length + d.anyShow.length ? '' : '<div class=mu style="text-align:center;padding:10px">Nothing due today<br><br><button class="btn sm" data-a=nt>Add task</button></div>'}
-  ${d.dueL.map(taskRow).join('')}${d.anyShow.length ? `<div class=lbl>Anytime · no deadline</div>${d.anyShow.map(taskRow).join('')}` : ''}
+  <div class=lbl>Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
+  <div class=card>${tasksContent}
   ${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
 }
 function vHabits() {
