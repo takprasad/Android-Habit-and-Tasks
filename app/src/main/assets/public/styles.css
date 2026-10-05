@@ -61,7 +61,7 @@ textarea{height:80px;padding:12px}
 .pri-High{color:#FF5252;font-weight:700}
 .pri-Medium{color:#FFC107;font-weight:700}
 .pri-Low{color:#4CAF50;font-weight:700}
-.task-list-scroll{max-height:230px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-y:contain;padding-right:4px}
+.task-list-scroll{max-height:calc(100vh - 280px);min-height:240px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-y:contain;padding-right:4px}
 
 /* ---- Android additions (no visual change): >=48dp touch targets via invisible hit-area extensions ---- */
 .ic,.chk,.btn.sm,.chip,.seg label,a[data-a],.pill[role=button],.card.click{position:relative}
