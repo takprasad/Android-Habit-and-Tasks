@@ -69,6 +69,14 @@ function habitCard(h, act = 'hd') {
   <div class=mu style="margin-top:4px">${h.ms.kind === 'streak' ? 'Streak' : 'Landmark'} <b class=am>${h.prog} / ${h.ms.target}</b> ${unit(h)}</div>${bar(h.prog, h.ms.target)}</div>
   <button class="chk ${dn ? 'done' : ''}" data-a=ci data-id=${h.id} ${dis ? 'disabled' : ''} aria-label="${dn ? 'Undo check-in' : 'Check in'} ${esc(h.name)}">${dn ? '✓' : ''}</button></div></div>`;
 }
+function habitStripItem(h) {
+  const t = today(), dn = L.hDays(S, h).has(t), sch = L.isScheduled(h, t);
+  const dis = (!sch && !(dn && !h.multi)) || h.paused;
+  return `<div class="habit-strip-item">
+    <button class="chk ${dn ? 'done' : ''}" data-a=ci data-id=${h.id} ${dis ? 'disabled' : ''} aria-label="${dn ? 'Undo check-in' : 'Check in'} ${esc(h.name)}">${dn ? '✓' : ''}</button>
+    <div class="habit-strip-name" data-a=hd data-id=${h.id}>${esc(h.name)}</div>
+  </div>`;
+}
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
   const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
@@ -114,7 +122,7 @@ function vToday() {
   return `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1>
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
   <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
-  ${d.habits.map((h) => habitCard(h, 'hd')).join('') || '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
+  ${d.habits.length ? `<div class="habit-strip">${d.habits.map(habitStripItem).join('')}</div>` : '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
   <div class=lbl>Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
   <div class=card><div class="task-list-scroll">${tasksContent}</div>
   ${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
