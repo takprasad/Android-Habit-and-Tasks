@@ -80,7 +80,7 @@ function habitStripItem(h) {
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
   const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
-  return `<div class=row style="padding:8px 0"><button class="chk ${k.status === 'Completed' ? 'done' : ''}" data-a=tc data-id=${k.id} aria-label="Complete ${esc(k.title)}">${k.status === 'Completed' ? '✓' : ''}</button>
+  return `<div class=row style="padding:5px 0"><button class="chk ${k.status === 'Completed' ? 'done' : ''}" data-a=tc data-id=${k.id} aria-label="Complete ${esc(k.title)}">${k.status === 'Completed' ? '✓' : ''}</button>
   <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span> · ${dm}${k.time && !(od && k.due === t) ? ' ' + k.time : ''}${od ? ' ⚠' : ''}</div></div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
 }
 
