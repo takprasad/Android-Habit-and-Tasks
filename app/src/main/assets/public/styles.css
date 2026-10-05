@@ -61,7 +61,7 @@ textarea{height:80px;padding:12px}
 .pri-High{color:#FF5252;font-weight:700}
 .pri-Medium{color:#FFC107;font-weight:700}
 .pri-Low{color:#4CAF50;font-weight:700}
-.task-list-scroll{max-height:calc(100vh - 440px);min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-y:contain;padding-right:4px;padding-bottom:28px}
+.task-list-scroll{max-height:calc(100vh - 440px);min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-y:contain;padding-right:4px;padding-bottom:52px}
 .habit-strip{display:flex;gap:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x;padding:14px 16px;background:var(--sf);border:1px solid var(--bd);border-radius:20px;margin-bottom:12px}
 .habit-strip-item{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:72px;max-width:88px;text-align:center;flex:none}
 .habit-strip-name{font-size:12px;font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;cursor:pointer}
