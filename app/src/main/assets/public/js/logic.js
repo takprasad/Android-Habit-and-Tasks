@@ -28,6 +28,7 @@ export const tzKey = () => { let z = ''; try { z = Intl.DateTimeFormat().resolve
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const PR = { High: 0, Medium: 1, Low: 2 };
+export const TASK_COINS = { High: 5, Medium: 3, Low: 2 };
 export const hm = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}h ${m}m` : `${m}m`; };
 export const clockStr = (s) => { s = Math.floor(s); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60) % 60, s % 60].map((n) => String(n).padStart(2, '0')).join(':'); };
 export const safeUrl = (u) => /^https?:\/\//i.test(u || '');
@@ -39,7 +40,7 @@ export const defaultSettings = () => ({
   weekStart: 1,
   notif: { on: false, daily: true, dailyTime: '20:00', risk: true, due: true, timer: true, reward: true },
 });
-export const newState = () => ({ v: 2, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings() });
+export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings() });
 export const log = (S, type, id, p) => { S.audit.push({ type, id, p, at: clock.now().getTime() }); };
 
 /* ---------- habit engine ---------- */
@@ -141,6 +142,19 @@ export function keepProgress(S, h) { h.ask = null; log(S, 'milestone_kept', h.id
 /** Evaluate every finished period of every active habit. Idempotent; safe to call any time. */
 export function evaluate(S) {
   const t = today(); let changed = false;
+  for (const k of S.tasks) {
+    if (isOpen(k) && k.due && k.due < t) {
+      const overdueDays = diffDays(k.due, t);
+      const prev = k.penalisedDays || 0;
+      if (overdueDays > prev) {
+        const diff = overdueDays - prev;
+        S.coins = Math.max(0, (S.coins || 0) - diff);
+        k.penalisedDays = overdueDays;
+        log(S, 'coin_penalty', k.id, { days: diff, coins: S.coins });
+        changed = true;
+      }
+    }
+  }
   for (const h of S.habits) {
     if (h.archived) continue;
     if (h.paused) { // paused habits are never judged; skip to the next period boundary on resume
@@ -198,8 +212,21 @@ export function addSession(S, k, dur, type, note, start) {
 }
 export function complete(S, k) {
   k.status = 'Completed'; k.doneAt = clock.now().getTime(); log(S, 'task_completed', k.id);
+  const earned = (TASK_COINS[k.pri] || 3) + (k.bonusCoins || 0);
+  S.coins = (S.coins || 0) + earned;
+  log(S, 'coins_earned', k.id, { earned, coins: S.coins });
   if (S.timer && S.timer.id === k.id) stopTimer(S);
-  if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, '🎉 Milestone reached! Reward unlocked.'); }
+  if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, `🎉 Milestone reached! Earned 🪙 ${earned} Supercoins!`); }
+  else { hooks.celebrate(`🎉 Task completed! Earned 🪙 ${earned} Supercoins.`); }
+}
+export function claimReward(S, r) {
+  const cost = r.cost || 0;
+  if ((S.coins || 0) < cost) return false;
+  S.coins = (S.coins || 0) - cost;
+  r.status = 'claimed';
+  r.claimedAt = clock.now().getTime();
+  log(S, 'reward_claimed', r.id, { cost, coins: S.coins });
+  return true;
 }
 export function reopen(S, k) { k.status = 'In Progress'; log(S, 'task_reopened', k.id); }
 export function startTimer(S, k) {
@@ -259,6 +286,7 @@ const AUDIT = {
   task_completed: () => 'Task completed', task_reopened: () => 'Task reopened',
   timer_started: () => 'Timer started', timer_paused: () => 'Timer paused', timer_resumed: () => 'Timer resumed',
   timer_stopped: (p) => `Timer stopped, ${hm(p?.dur || 0)} logged`, session_added: (p) => `Logged ${hm(p?.dur || 0)} manually`,
+  coin_penalty: (p) => `Penalty: -${p?.days || 1} coin(s) for overdue delay`,
 };
 export const describeAudit = (e) => (AUDIT[e.type] ? AUDIT[e.type](e.p) : e.type.replace(/_/g, ' '));
 export const auditFor = (S, id) => S.audit.filter((e) => e.id === id).sort((a, b) => b.at - a.at);
@@ -280,6 +308,7 @@ export function migrate(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) bad('not an object');
   if (!Array.isArray(raw.habits) || !Array.isArray(raw.tasks)) bad('missing habits/tasks');
   const S = newState();
+  S.coins = opt(raw.coins, 0, (v) => num(v, 'coins', 0));
   S.theme = oneOf(raw.theme ?? 'system', ['system', 'light', 'dark'], 'theme');
   const st = raw.settings || {}, ds = defaultSettings();
   S.settings = { weekStart: opt(st.weekStart, 1, (v) => num(v, 'weekStart', 0, 6)), notif: { ...ds.notif } };
@@ -313,7 +342,7 @@ export function migrate(raw) {
       id: id(k.id, 'task'), title: str(k.title, 'task title', 500), pri: oneOf(k.pri ?? 'Medium', ['High', 'Medium', 'Low'], 'priority'), cat: optStr(k.cat, 'cat', 40) || 'Personal',
       due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')),
       status: oneOf(k.status ?? 'Not Started', ['Not Started', 'In Progress', 'Completed', 'Cancelled', 'Archived'], 'status'),
-      start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)),
+      start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)), bonusCoins: opt(k.bonusCoins, 0, (v) => num(v, 'bonusCoins', 0)), penalisedDays: opt(k.penalisedDays, 0, (v) => num(v, 'penalisedDays', 0)),
       ms: { mode: oneOf(ms.mode ?? 'once', ['once', 'worklog'], 'ms.mode'), every: opt(ms.every, 5, (v) => num(v, 'every', 0.25, 1e4)), after: oneOf(ms.after ?? 'reset', ['reset', 'carry', 'add'], 'ms.after'), reward: optStr(ms.reward, 'reward', 200), url: optStr(ms.url, 'url') },
     };
     if (k.last != null) kk.last = num(k.last, 'last'); if (k.doneAt != null) kk.doneAt = num(k.doneAt, 'doneAt'); if (k.once) kk.once = 1;
@@ -321,7 +350,7 @@ export function migrate(raw) {
   });
   S.checkins = opt(raw.checkins, [], (v) => arr(v, 'checkins').map((c) => ({ id: id(c.id, 'checkin'), h: id(c.h, 'checkin habit'), d: date(c.d, 'checkin date'), at: num(c.at, 'checkin at'), tz: optStr(c.tz, 'tz', 80), ...(c.bd ? { bd: 1 } : {}) })));
   S.sessions = opt(raw.sessions, [], (v) => arr(v, 'sessions').map((s) => ({ id: id(s.id, 'session'), t: id(s.t, 'session task'), start: num(s.start, 'start'), dur: num(s.dur, 'dur', 0), type: oneOf(s.type, ['timer', 'manual'], 'session type'), note: optStr(s.note, 'note', 1000) })));
-  S.rewards = opt(raw.rewards, [], (v) => arr(v, 'rewards').map((r) => ({ id: id(r.id, 'reward'), name: str(r.name, 'reward name', 200), url: optStr(r.url, 'url'), src: optStr(r.src, 'src', 500), status: oneOf(r.status, ['unlocked', 'claimed'], 'reward status'), at: num(r.at, 'at'), ...(r.claimedAt != null ? { claimedAt: num(r.claimedAt, 'claimedAt') } : {}) })));
+  S.rewards = opt(raw.rewards, [], (v) => arr(v, 'rewards').map((r) => ({ id: id(r.id, 'reward'), name: str(r.name, 'reward name', 200), url: optStr(r.url, 'url'), src: optStr(r.src, 'src', 500), cost: opt(r.cost, 10, (x) => num(x, 'cost', 0)), status: oneOf(r.status, ['unlocked', 'claimed'], 'reward status'), at: num(r.at, 'at'), ...(r.claimedAt != null ? { claimedAt: num(r.claimedAt, 'claimedAt') } : {}) })));
   S.audit = opt(raw.audit, [], (v) => arr(v, 'audit').map((e) => ({ type: str(e.type, 'audit type', 64), id: typeof e.id === 'string' ? e.id : '', p: e.p && typeof e.p === 'object' ? e.p : undefined, at: num(e.at, 'audit at') })));
   const t = raw.timer;
   S.timer = t && tid.has(t.id) ? { id: t.id, run: !!t.run, at: num(t.at, 'timer at'), acc: num(t.acc, 'timer acc', 0) } : null;
