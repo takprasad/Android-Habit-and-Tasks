@@ -130,15 +130,15 @@ function vToday() {
 }
 function vHabits() {
   const l = S.habits.filter((h) => !h.archived && h.name.toLowerCase().includes(q.toLowerCase())), ar = S.habits.filter((h) => h.archived);
-  return `<div class="row sp"><h1>Habits</h1><button class=ic data-a=nh aria-label="New habit">+</button></div>
+  return `<h1>Habits</h1>
   <input type=text id=q placeholder="Search habits" value="${esc(q)}" aria-label="Search habits">
-  <div class=lbl></div>${l.map((h) => habitCard(h, 'eh')).join('') || '<p class=mu>No habits yet. Tap + to add one.</p>'}
+  <div class=lbl></div>${l.map((h) => habitCard(h, 'eh')).join('') || '<p class=mu>No habits yet. Tap + below to add one.</p>'}
   ${ar.length ? `<div class=lbl>Archived</div>${ar.map((h) => `<div class="card row sp"><span>${esc(h.name)}</span><button class="btn sm out" data-a=unarch data-id=${h.id}>Restore</button></div>`).join('')}` : ''}`;
 }
 function vTasks() {
   const l = L.filterTasks(S, q, fil);
   const chips = [['open', 'Open'], ['over', 'Overdue'], ['done', 'Completed'], ['all', 'All']].map(([v, n]) => `<label class=chip><input type=radio name=fil value=${v} ${fil === v ? 'checked' : ''}>${n}</label>`).join('');
-  return `<div class="row sp"><h1>Tasks</h1><button class=ic data-a=nt aria-label="New task">+</button></div>
+  return `<h1>Tasks</h1>
   <input type=text id=q placeholder="Search tasks" value="${esc(q)}" aria-label="Search tasks"><div style="margin:10px 0" id=fil>${chips}</div>
   <div class=card>${l.map(taskRow).join('') || '<span class=mu>No tasks here.</span>'}</div>`;
 }
@@ -146,7 +146,7 @@ function vRewards() {
   const seg = view?.seg || 'unlocked', R = S.rewards.filter((r) => r.status === seg);
   const up = S.habits.filter((h) => !h.archived && h.ms.reward).map((h) => ({ n: h.ms.reward, src: h.name, p: h.prog / h.ms.target })).concat(S.tasks.filter((k) => k.ms.mode === 'worklog' && k.ms.reward && k.status !== 'Completed').map((k) => ({ n: k.ms.reward, src: k.title, p: L.toward(k) / L.everySec(k) })));
   const card = (n, s, a, cost) => `<div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px;background:var(--tr)">🪙</div><div class=grow><b>${esc(n)}</b><div class=mu>${esc(s)}${cost ? ' · Price: 🪙 ' + cost : ''}</div></div>${a}</div>`;
-  return `<div class="row sp"><div><h1 style="margin:0">Rewards</h1><p class=mu style="margin:4px 0 0">Wallet: <b class=am style="font-size:16px">🪙 ${S.coins || 0} Supercoins</b></p></div><button class=ic data-a=nr aria-label="New reward">+</button></div>
+  return `<div><h1 style="margin:0">Rewards</h1><p class=mu style="margin:4px 0 0">Wallet: <b class=am style="font-size:16px">🪙 ${S.coins || 0} Supercoins</b></p></div>
   <div class=mu style="margin-top:8px;font-size:12px">Task earnings: <span class="pri-High">High: 🪙 5</span> · <span class="pri-Medium">Medium: 🪙 3</span> · <span class="pri-Low">Low: 🪙 2</span></div>
   <div class=seg role=radiogroup id=rseg style="margin-top:10px">${['unlocked', 'upcoming', 'claimed'].map((s) => `<label><input type=radio name=rs value=${s} ${seg === s ? 'checked' : ''}>${s[0].toUpperCase() + s.slice(1)}</label>`).join('')}</div>
   ${seg === 'upcoming' ? up.map((u) => card(u.n, u.src, `<span class=am>${Math.round(u.p * 100)}%</span>`)).join('') || '<p class=mu>Set a reward on a habit or task milestone.</p>' :
@@ -172,7 +172,10 @@ function vStats() {
 function render() {
   if (tab === 'task' && view?.task) return taskDetail(view.task);
   const v = { today: vToday, habits: vHabits, tasks: vTasks, rewards: vRewards, stats: vStats, settings: vSettings }[tab];
-  const fq = document.activeElement?.id === 'q'; $('#app').innerHTML = v();
+  const fq = document.activeElement?.id === 'q';
+  const fabAction = { habits: 'nh', tasks: 'nt', rewards: 'nr' }[tab];
+  const fabHtml = fabAction ? `<button class="fab-btn" data-a=${fabAction} aria-label="Add new item">+</button>` : '';
+  $('#app').innerHTML = v() + fabHtml;
   if (fq) { const i = $('#q'); i.focus(); i.setSelectionRange(99, 99); }
   const T = [['today', '◉', 'Today'], ['habits', '↻', 'Habits'], ['tasks', '☑', 'Tasks'], ['rewards', '★', 'Rewards'], ['settings', '⚙', 'Settings']];
   $('#tabs').innerHTML = T.map(([k, i, n]) => `<button data-a=tab data-id=${k} ${tab === k ? 'aria-current=page' : ''}><span aria-hidden=true>${i}</span>${n}</button>`).join('');
