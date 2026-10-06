@@ -139,18 +139,20 @@ export function reset(S, h, why) {
 }
 export function keepProgress(S, h) { h.ask = null; log(S, 'milestone_kept', h.id); }
 
-/** Evaluate every finished period of every active habit. Idempotent; safe to call any time. */
+/** Evaluate every finished period of every active habit and overdue task penalties. */
 export function evaluate(S) {
   const t = today(); let changed = false;
   for (const k of S.tasks) {
     if (isOpen(k) && k.due && k.due < t) {
-      const overdueDays = diffDays(k.due, t);
-      const prev = k.penalisedDays || 0;
-      if (overdueDays > prev) {
-        const diff = overdueDays - prev;
+      const delayDays = diffDays(k.due, t);
+      const baseCoins = (TASK_COINS[k.pri] || 3) + (k.bonusCoins || 0);
+      const totalNetPenalty = Math.max(0, delayDays - baseCoins);
+      const prev = k.netPenaltyApplied || 0;
+      if (totalNetPenalty > prev) {
+        const diff = totalNetPenalty - prev;
         S.coins = Math.max(0, (S.coins || 0) - diff);
-        k.penalisedDays = overdueDays;
-        log(S, 'coin_penalty', k.id, { days: diff, coins: S.coins });
+        k.netPenaltyApplied = totalNetPenalty;
+        log(S, 'coin_penalty', k.id, { days: delayDays, penalty: diff, coins: S.coins });
         changed = true;
       }
     }
@@ -212,7 +214,10 @@ export function addSession(S, k, dur, type, note, start) {
 }
 export function complete(S, k) {
   k.status = 'Completed'; k.doneAt = clock.now().getTime(); log(S, 'task_completed', k.id);
-  const earned = (TASK_COINS[k.pri] || 3) + (k.bonusCoins || 0);
+  const t = today();
+  const baseCoins = (TASK_COINS[k.pri] || 3) + (k.bonusCoins || 0);
+  const delayDays = k.due && k.due < t ? diffDays(k.due, t) : 0;
+  const earned = Math.max(0, baseCoins - delayDays);
   S.coins = (S.coins || 0) + earned;
   log(S, 'coins_earned', k.id, { earned, coins: S.coins });
   if (S.timer && S.timer.id === k.id) stopTimer(S);
@@ -342,7 +347,7 @@ export function migrate(raw) {
       id: id(k.id, 'task'), title: str(k.title, 'task title', 500), pri: oneOf(k.pri ?? 'Medium', ['High', 'Medium', 'Low'], 'priority'), cat: optStr(k.cat, 'cat', 40) || 'Personal',
       due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')),
       status: oneOf(k.status ?? 'Not Started', ['Not Started', 'In Progress', 'Completed', 'Cancelled', 'Archived'], 'status'),
-      start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)), bonusCoins: opt(k.bonusCoins, 0, (v) => num(v, 'bonusCoins', 0)), penalisedDays: opt(k.penalisedDays, 0, (v) => num(v, 'penalisedDays', 0)),
+      start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)), bonusCoins: opt(k.bonusCoins, 0, (v) => num(v, 'bonusCoins', 0)), netPenaltyApplied: opt(k.netPenaltyApplied, 0, (v) => num(v, 'netPenaltyApplied', 0)),
       ms: { mode: oneOf(ms.mode ?? 'once', ['once', 'worklog'], 'ms.mode'), every: opt(ms.every, 5, (v) => num(v, 'every', 0.25, 1e4)), after: oneOf(ms.after ?? 'reset', ['reset', 'carry', 'add'], 'ms.after'), reward: optStr(ms.reward, 'reward', 200), url: optStr(ms.url, 'url') },
     };
     if (k.last != null) kk.last = num(k.last, 'last'); if (k.doneAt != null) kk.doneAt = num(k.doneAt, 'doneAt'); if (k.once) kk.once = 1;
