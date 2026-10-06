@@ -80,8 +80,9 @@ function habitStripItem(h) {
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
   const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
+  const bonusTag = k.bonusCoins > 0 ? ` · +🪙 ${k.bonusCoins}` : '';
   return `<div class=row style="padding:5px 0"><button class="chk ${k.status === 'Completed' ? 'done' : ''}" data-a=tc data-id=${k.id} aria-label="Complete ${esc(k.title)}">${k.status === 'Completed' ? '✓' : ''}</button>
-  <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span> · ${dm}${k.time && !(od && k.due === t) ? ' ' + k.time : ''}${od ? ' ⚠' : ''}</div></div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
+  <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span>${bonusTag} · ${dm}${k.time && !(od && k.due === t) ? ' ' + k.time : ''}${od ? ' ⚠' : ''}</div></div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
 }
 
 /* ---------- views ---------- */
@@ -119,7 +120,7 @@ function vToday() {
     }
   }
 
-  return `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1>
+  return `<div class="row sp"><h1 style="margin:0">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1><div class="coin-pill">🪙 ${S.coins || 0}</div></div>
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
   <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
   ${d.habits.length ? `<div class="habit-strip">${d.habits.map(habitStripItem).join('')}</div>` : '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
@@ -129,26 +130,32 @@ function vToday() {
 }
 function vHabits() {
   const l = S.habits.filter((h) => !h.archived && h.name.toLowerCase().includes(q.toLowerCase())), ar = S.habits.filter((h) => h.archived);
-  return `<div class="row sp"><h1>Habits</h1><button class=ic data-a=nh aria-label="New habit">+</button></div>
+  return `<h1>Habits</h1>
   <input type=text id=q placeholder="Search habits" value="${esc(q)}" aria-label="Search habits">
-  <div class=lbl></div>${l.map((h) => habitCard(h, 'eh')).join('') || '<p class=mu>No habits yet. Tap + to add one.</p>'}
+  <div class=lbl></div>${l.map((h) => habitCard(h, 'eh')).join('') || '<p class=mu>No habits yet. Tap + below to add one.</p>'}
   ${ar.length ? `<div class=lbl>Archived</div>${ar.map((h) => `<div class="card row sp"><span>${esc(h.name)}</span><button class="btn sm out" data-a=unarch data-id=${h.id}>Restore</button></div>`).join('')}` : ''}`;
 }
 function vTasks() {
   const l = L.filterTasks(S, q, fil);
   const chips = [['open', 'Open'], ['over', 'Overdue'], ['done', 'Completed'], ['all', 'All']].map(([v, n]) => `<label class=chip><input type=radio name=fil value=${v} ${fil === v ? 'checked' : ''}>${n}</label>`).join('');
-  return `<div class="row sp"><h1>Tasks</h1><button class=ic data-a=nt aria-label="New task">+</button></div>
+  return `<h1>Tasks</h1>
   <input type=text id=q placeholder="Search tasks" value="${esc(q)}" aria-label="Search tasks"><div style="margin:10px 0" id=fil>${chips}</div>
   <div class=card>${l.map(taskRow).join('') || '<span class=mu>No tasks here.</span>'}</div>`;
 }
 function vRewards() {
   const seg = view?.seg || 'unlocked', R = S.rewards.filter((r) => r.status === seg);
   const up = S.habits.filter((h) => !h.archived && h.ms.reward).map((h) => ({ n: h.ms.reward, src: h.name, p: h.prog / h.ms.target })).concat(S.tasks.filter((k) => k.ms.mode === 'worklog' && k.ms.reward && k.status !== 'Completed').map((k) => ({ n: k.ms.reward, src: k.title, p: L.toward(k) / L.everySec(k) })));
-  const ready = S.rewards.filter((r) => r.status === 'unlocked').length;
-  const card = (n, s, a) => `<div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px">${esc(n[0] || '★')}</div><div class=grow><b>${esc(n)}</b><div class=mu>${esc(s)}</div></div>${a}</div>`;
-  return `<h1>Rewards</h1><p class=mu>${ready} ready to claim</p><div class=seg role=radiogroup id=rseg>${['unlocked', 'upcoming', 'claimed'].map((s) => `<label><input type=radio name=rs value=${s} ${seg === s ? 'checked' : ''}>${s[0].toUpperCase() + s.slice(1)}</label>`).join('')}</div>
+  const card = (n, s, a, cost) => `<div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px;background:var(--tr)">🪙</div><div class=grow><b>${esc(n)}</b><div class=mu>${esc(s)}${cost ? ' · Price: 🪙 ' + cost : ''}</div></div>${a}</div>`;
+  return `<div><h1 style="margin:0">Rewards</h1><p class=mu style="margin:4px 0 0">Wallet: <b class=am style="font-size:16px">🪙 ${S.coins || 0} Supercoins</b></p></div>
+  <div class=mu style="margin-top:8px;font-size:12px">Task earnings: <span class="pri-High">High: 🪙 5</span> · <span class="pri-Medium">Medium: 🪙 3</span> · <span class="pri-Low">Low: 🪙 2</span></div>
+  <div class=seg role=radiogroup id=rseg style="margin-top:10px">${['unlocked', 'upcoming', 'claimed'].map((s) => `<label><input type=radio name=rs value=${s} ${seg === s ? 'checked' : ''}>${s[0].toUpperCase() + s.slice(1)}</label>`).join('')}</div>
   ${seg === 'upcoming' ? up.map((u) => card(u.n, u.src, `<span class=am>${Math.round(u.p * 100)}%</span>`)).join('') || '<p class=mu>Set a reward on a habit or task milestone.</p>' :
-    R.map((r) => card(r.name, 'From ' + r.src, (seg === 'unlocked' ? (safeUrl(r.url) ? `<a class="btn sm out" style="display:grid;place-items:center" href="${esc(r.url)}" data-a=open data-url="${esc(r.url)}" rel=noopener>Open link</a>` : '') + `<button class="btn sm" data-a=claim data-id=${r.id}>Claim</button>` : '<span class=mu>✓</span>')).replace('class="card row"', 'class="card row" style="flex-wrap:wrap"')).join('') || '<p class=mu>Nothing here yet.</p>'}`;
+    R.map((r) => {
+      const cost = r.cost || 10;
+      const canAfford = (S.coins || 0) >= cost;
+      const btn = seg === 'unlocked' ? `<button class="${canAfford ? 'btn' : 'btn out'} sm" data-a=claimr data-id=${r.id} ${canAfford ? '' : 'disabled'}>${canAfford ? 'Claim' : 'Need 🪙 ' + cost}</button>` : '<span class=mu>✓ Claimed</span>';
+      return card(r.name, 'From ' + r.src, btn, cost);
+    }).join('') || '<p class=mu>Nothing here yet.</p>'}`;
 }
 function vStats() {
   const m = view?.m || 'habits', H = S.habits, ev = H.flatMap((h) => h.evals), met = ev.filter((e) => e.ok).length;
@@ -165,7 +172,10 @@ function vStats() {
 function render() {
   if (tab === 'task' && view?.task) return taskDetail(view.task);
   const v = { today: vToday, habits: vHabits, tasks: vTasks, rewards: vRewards, stats: vStats, settings: vSettings }[tab];
-  const fq = document.activeElement?.id === 'q'; $('#app').innerHTML = v();
+  const fq = document.activeElement?.id === 'q';
+  const fabAction = { habits: 'nh', tasks: 'nt', rewards: 'nr' }[tab];
+  const fabHtml = fabAction ? `<button class="fab-btn" data-a=${fabAction} aria-label="Add new item">+</button>` : '';
+  $('#app').innerHTML = v() + fabHtml;
   if (fq) { const i = $('#q'); i.focus(); i.setSelectionRange(99, 99); }
   const T = [['today', '◉', 'Today'], ['habits', '↻', 'Habits'], ['tasks', '☑', 'Tasks'], ['rewards', '★', 'Rewards'], ['settings', '⚙', 'Settings']];
   $('#tabs').innerHTML = T.map(([k, i, n]) => `<button data-a=tab data-id=${k} ${tab === k ? 'aria-current=page' : ''}><span aria-hidden=true>${i}</span>${n}</button>`).join('');
@@ -236,13 +246,27 @@ function fTask(k) {
  ${fld('Category', `<select name=cat>${CATS.map((c) => `<option ${k?.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>`)}
  <div class=lbl>Milestone</div>${seg('mode', ['Once on completion', 'Every work log'], ms.mode === 'worklog' ? 'Every work log' : 'Once on completion')}
  <div id=wl class="${ms.mode === 'worklog' ? '' : 'hide'}">${fld('Every N hours worked', `<input type=number name=every min=0.25 step=0.25 value="${ms.every || 5}">`)}<div class=lbl>After each reward</div>${seg('after', ['Reset to 0', 'Carry over', 'Keep adding'], after)}</div>
- ${fld('Reward (optional)', `<input type=text name=reward maxlength=60 value="${esc(ms.reward || '')}">`)}${fld('Reward link (optional)', `<input type=url name=url value="${esc(ms.url || '')}">`)}
+ ${fld('Reward (optional)', `<input type=text name=reward maxlength=60 value="${esc(ms.reward || '')}">`)}${fld('Additional bonus Supercoins reward (optional)', `<input type=number name=bonusCoins min=0 value="${k?.bonusCoins || 0}">`)}${fld('Reward link (optional)', `<input type=url name=url value="${esc(ms.url || '')}">`)}
  <button class=btn data-a=st data-id="${k?.id || ''}">${e ? 'Save changes' : 'Create task'}</button>`);
+}
+function fReward() {
+  sheet(`<div class="row sp"><h2 class=num>New reward</h2>${closeBtn}</div>
+ ${fld('Reward name', '<input type=text name=rname maxlength=100 placeholder="e.g. Watch a movie, Buy a book">')}
+ ${fld('Price (Supercoins)', '<input type=number name=rcost min=1 value=10>')}
+ ${fld('Link URL (optional)', '<input type=url name=rurl placeholder="https://...">')}
+ <button class=btn data-a=sr>Create reward</button>`);
+}
+function saveReward() {
+  const name = val('rname').trim(); if (!name) return toast('Please enter a reward name');
+  const cost = Math.max(1, Math.round(+val('rcost')) || 10);
+  const url = val('rurl').trim(); if (url && !safeUrl(url)) return toast('Link must start with http:// or https://');
+  const r = { id: L.uid(), name, cost, url, src: 'Custom Reward', status: 'unlocked', at: Date.now() };
+  S.rewards.push(r); L.log(S, 'reward_created', r.id, { cost }); save(); sheet(); render();
 }
 function saveTask(id) {
   const title = val('title').trim(); if (!title) return toast('Please enter a title'); const url = val('url').trim(); if (url && !safeUrl(url)) return toast('Link must start with http:// or https://');
   const wl = val('mode') === 'Every work log', due = val('due') || null;
-  const fields = { title, pri: val('pri'), cat: val('cat'), due, time: due ? val('time') || null : null };
+  const fields = { title, pri: val('pri'), cat: val('cat'), due, time: due ? val('time') || null : null, bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0) };
   const ms = { mode: wl ? 'worklog' : 'once', every: Math.max(0.25, +val('every') || 5), after: val('after') === 'Keep adding' ? 'add' : val('after') === 'Carry over' ? 'carry' : 'reset', reward: val('reward').trim(), url };
   const k = id && S.tasks.find((x) => x.id === id);
   if (k) {
@@ -346,6 +370,8 @@ function openHabitSheet(kind, id) { histLimit = 50; historySheet(kind, id); }
 let lastTimerAct = -1e9;
 const timerBusy = () => { const n = performance.now(), busy = n - lastTimerAct < 600; if (!busy) lastTimerAct = n; return busy; };
 const A = {
+  nr: () => fReward(), sr: () => saveReward(),
+  claimr: ({ id }) => { const r = byId('rewards', id); if (L.claimReward(S, r)) { save(); render(); toast(`Claimed "${r.name}" for 🪙 ${r.cost || 10}!`); } else { toast(`Not enough Supercoins! Need 🪙 ${r.cost || 10}`); } },
   tab: ({ id, e }) => { e.preventDefault(); tab = id; view = null; $('#tabs').hidden = false; render(); },
   x: () => sheet(), set: () => { tab = 'settings'; view = null; render(); }, nh: ({ e }) => { e.preventDefault(); fHabit(); }, nt: ({ e }) => { e.preventDefault(); fTask(); },
   sh: ({ id }) => saveHabit(id), st: ({ id }) => saveTask(id),

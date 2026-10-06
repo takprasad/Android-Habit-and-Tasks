@@ -61,6 +61,9 @@ textarea{height:80px;padding:12px}
 .pri-High{color:#FF5252;font-weight:700}
 .pri-Medium{color:#FFC107;font-weight:700}
 .pri-Low{color:#4CAF50;font-weight:700}
+.coin-pill{background:var(--sf);border:1px solid var(--bd);color:var(--am);font-weight:700;font-size:13px;padding:4px 12px;border-radius:99px;display:inline-flex;align-items:center;gap:4px}
+.fab-btn{position:fixed;bottom:calc(64px + var(--sab, 0px));left:50%;transform:translateX(-50%);width:52px;height:52px;border-radius:50%;background:var(--ac);color:var(--on);font-size:26px;font-weight:700;display:grid;place-items:center;border:none;box-shadow:0 6px 16px rgba(0,0,0,0.35);z-index:90;cursor:pointer;transition:transform .15s ease}
+.fab-btn:active{transform:translateX(-50%) scale(0.92)}
 .task-list-scroll{max-height:calc(100vh - 400px);min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior-y:contain;padding-right:4px;padding-bottom:12px}
 .habit-strip{display:flex;gap:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x;padding:14px 16px;background:var(--sf);border:1px solid var(--bd);border-radius:20px;margin-bottom:12px}
 .habit-strip-item{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:72px;max-width:88px;text-align:center;flex:none}

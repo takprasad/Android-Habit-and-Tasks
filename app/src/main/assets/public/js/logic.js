@@ -28,6 +28,7 @@ export const tzKey = () => { let z = ''; try { z = Intl.DateTimeFormat().resolve
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const PR = { High: 0, Medium: 1, Low: 2 };
+export const TASK_COINS = { High: 5, Medium: 3, Low: 2 };
 export const hm = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}h ${m}m` : `${m}m`; };
 export const clockStr = (s) => { s = Math.floor(s); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60) % 60, s % 60].map((n) => String(n).padStart(2, '0')).join(':'); };
 export const safeUrl = (u) => /^https?:\/\//i.test(u || '');
@@ -39,7 +40,7 @@ export const defaultSettings = () => ({
   weekStart: 1,
   notif: { on: false, daily: true, dailyTime: '20:00', risk: true, due: true, timer: true, reward: true },
 });
-export const newState = () => ({ v: 2, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings() });
+export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings() });
 export const log = (S, type, id, p) => { S.audit.push({ type, id, p, at: clock.now().getTime() }); };
 
 /* ---------- habit engine ---------- */
@@ -211,8 +212,21 @@ export function addSession(S, k, dur, type, note, start) {
 }
 export function complete(S, k) {
   k.status = 'Completed'; k.doneAt = clock.now().getTime(); log(S, 'task_completed', k.id);
+  const earned = (TASK_COINS[k.pri] || 3) + (k.bonusCoins || 0);
+  S.coins = (S.coins || 0) + earned;
+  log(S, 'coins_earned', k.id, { earned, coins: S.coins });
   if (S.timer && S.timer.id === k.id) stopTimer(S);
-  if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, '🎉 Milestone reached! Reward unlocked.'); }
+  if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, `🎉 Milestone reached! Earned 🪙 ${earned} Supercoins!`); }
+  else { hooks.celebrate(`🎉 Task completed! Earned 🪙 ${earned} Supercoins.`); }
+}
+export function claimReward(S, r) {
+  const cost = r.cost || 0;
+  if ((S.coins || 0) < cost) return false;
+  S.coins = (S.coins || 0) - cost;
+  r.status = 'claimed';
+  r.claimedAt = clock.now().getTime();
+  log(S, 'reward_claimed', r.id, { cost, coins: S.coins });
+  return true;
 }
 export function reopen(S, k) { k.status = 'In Progress'; log(S, 'task_reopened', k.id); }
 export function startTimer(S, k) {
@@ -294,6 +308,7 @@ export function migrate(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) bad('not an object');
   if (!Array.isArray(raw.habits) || !Array.isArray(raw.tasks)) bad('missing habits/tasks');
   const S = newState();
+  S.coins = opt(raw.coins, 0, (v) => num(v, 'coins', 0));
   S.theme = oneOf(raw.theme ?? 'system', ['system', 'light', 'dark'], 'theme');
   const st = raw.settings || {}, ds = defaultSettings();
   S.settings = { weekStart: opt(st.weekStart, 1, (v) => num(v, 'weekStart', 0, 6)), notif: { ...ds.notif } };
@@ -335,7 +350,7 @@ export function migrate(raw) {
   });
   S.checkins = opt(raw.checkins, [], (v) => arr(v, 'checkins').map((c) => ({ id: id(c.id, 'checkin'), h: id(c.h, 'checkin habit'), d: date(c.d, 'checkin date'), at: num(c.at, 'checkin at'), tz: optStr(c.tz, 'tz', 80), ...(c.bd ? { bd: 1 } : {}) })));
   S.sessions = opt(raw.sessions, [], (v) => arr(v, 'sessions').map((s) => ({ id: id(s.id, 'session'), t: id(s.t, 'session task'), start: num(s.start, 'start'), dur: num(s.dur, 'dur', 0), type: oneOf(s.type, ['timer', 'manual'], 'session type'), note: optStr(s.note, 'note', 1000) })));
-  S.rewards = opt(raw.rewards, [], (v) => arr(v, 'rewards').map((r) => ({ id: id(r.id, 'reward'), name: str(r.name, 'reward name', 200), url: optStr(r.url, 'url'), src: optStr(r.src, 'src', 500), status: oneOf(r.status, ['unlocked', 'claimed'], 'reward status'), at: num(r.at, 'at'), ...(r.claimedAt != null ? { claimedAt: num(r.claimedAt, 'claimedAt') } : {}) })));
+  S.rewards = opt(raw.rewards, [], (v) => arr(v, 'rewards').map((r) => ({ id: id(r.id, 'reward'), name: str(r.name, 'reward name', 200), url: optStr(r.url, 'url'), src: optStr(r.src, 'src', 500), cost: opt(r.cost, 10, (x) => num(x, 'cost', 0)), status: oneOf(r.status, ['unlocked', 'claimed'], 'reward status'), at: num(r.at, 'at'), ...(r.claimedAt != null ? { claimedAt: num(r.claimedAt, 'claimedAt') } : {}) })));
   S.audit = opt(raw.audit, [], (v) => arr(v, 'audit').map((e) => ({ type: str(e.type, 'audit type', 64), id: typeof e.id === 'string' ? e.id : '', p: e.p && typeof e.p === 'object' ? e.p : undefined, at: num(e.at, 'audit at') })));
   const t = raw.timer;
   S.timer = t && tid.has(t.id) ? { id: t.id, run: !!t.run, at: num(t.at, 'timer at'), acc: num(t.acc, 'timer acc', 0) } : null;
