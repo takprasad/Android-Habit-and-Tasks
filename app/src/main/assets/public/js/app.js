@@ -81,7 +81,8 @@ function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
   const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
   const bonusTag = k.bonusCoins > 0 ? ` · +🪙 ${k.bonusCoins}` : '';
-  return `<div class=row style="padding:5px 0"><button class="chk ${k.status === 'Completed' ? 'done' : ''}" data-a=tc data-id=${k.id} aria-label="Complete ${esc(k.title)}">${k.status === 'Completed' ? '✓' : ''}</button>
+  const isDone = k.status === 'Completed';
+  return `<div class=row style="padding:5px 0"><button class="chk ${isDone ? 'done' : ''}" data-a=tc data-id=${k.id} ${isDone ? 'disabled' : ''} aria-label="${isDone ? 'Completed' : 'Complete'} ${esc(k.title)}">${isDone ? '✓' : ''}</button>
   <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span>${bonusTag} · ${dm}${k.time && !(od && k.due === t) ? ' ' + k.time : ''}${od ? ' ⚠' : ''}</div></div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
 }
 
@@ -285,7 +286,7 @@ function taskDetail(id) {
   $('#app').innerHTML = `<div class=row><button class=ic data-a=back aria-label=Back>←</button><h1 style="font-size:24px;margin:0">${esc(k.title)}</h1></div>
   <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (k.time ? ' ' + k.time : '') : 'No deadline'} · ${k.status}</p>
   <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div><div class=row>
-  ${k.status === 'Completed' ? '<button class="btn out" data-a=reopen data-id=' + id + '>Reopen</button>' : rn && S.timer.run ? `<button class="btn out" data-a=pause>Pause</button><button class=btn data-a=stop>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume>Resume</button><button class="btn out" data-a=stop>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button>`}</div></div>
+  ${k.status === 'Completed' ? '' : rn && S.timer.run ? `<button class="btn out" data-a=pause>Pause</button><button class=btn data-a=stop>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume>Resume</button><button class="btn out" data-a=stop>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button>`}</div></div>
   ${k.ms.mode === 'worklog' ? `<div class=card><b>Milestone</b> <span class=am>${hm(L.toward(k))} / ${k.ms.every}h</span>${bar(L.toward(k), ev)}<div class=mu>${esc(k.ms.reward || '')}</div></div>` : k.ms.reward ? `<div class=card><b>Reward on completion:</b> ${esc(k.ms.reward)}</div>` : ''}
   <div class=lbl>Work log · total ${hm(L.worked(S, k))}</div><div class=card>${ses.map((s) => `<div class="row sp"><span>${new Date(s.start).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · ${s.type === 'timer' ? 'Timer' : 'Manual'}${s.note ? ' · ' + esc(s.note) : ''}</span><b>${hm(s.dur)}</b></div>`).join('') || '<span class=mu>No sessions yet.</span>'}</div>
   <div class=row><button class="btn out" data-a=lt data-id=${id}>+ Log time</button>${k.status !== 'Completed' ? `<button class=btn data-a=tc data-id=${id}>Mark complete</button>` : ''}</div>
@@ -344,8 +345,7 @@ function theme() {
 const byId = (a, id) => S[a].find((x) => x.id === id);
 function afterTask(id) { tab === 'task' ? taskDetail(id) : render(); }
 function completeTask(k) {
-  celebrated = false; L.complete(S, k); save(); afterTask(k.id);
-  if (!celebrated) toast('Task completed', () => { L.reopen(S, k); save(); afterTask(k.id); });
+  L.complete(S, k); save(); afterTask(k.id);
 }
 function leaveTask() { tab = origin || 'today'; view = null; $('#tabs').hidden = false; render(); }
 function doCheckin(h) {
@@ -388,7 +388,7 @@ const A = {
     save(); render(); habitDetail(h.id); if (!celebrated) toast('Check-in added for ' + d, () => { L.undoCheckin(S, h, cid); save(); render(); });
   },
   hist: ({ id, b }) => openHabitSheet(b.dataset.kind, id), hmore: ({ id, b }) => { histLimit += 100; historySheet(b.dataset.kind, id); },
-  tc: ({ k }) => k.status === 'Completed' ? (L.reopen(S, k), save(), afterTask(k.id)) : completeTask(k),
+  tc: ({ k }) => k.status === 'Completed' ? null : completeTask(k),
   td: ({ id, e }) => { e.preventDefault(); if (tab !== 'task') origin = tab; taskDetail(id); }, back: () => leaveTask(),
   et: ({ k }) => fTask(k),
   start: ({ k, id }) => { if (timerBusy()) return; if (S.timer && S.timer.id !== id && !confirm('Another timer is running. Stop it and start this one?')) return; L.startTimer(S, k); save(); taskDetail(id); },
