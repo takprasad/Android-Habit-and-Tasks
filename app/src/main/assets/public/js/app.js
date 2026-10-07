@@ -288,7 +288,7 @@ function taskDetail(id) {
   <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div><div class=row>
   ${k.status === 'Completed' ? '' : rn && S.timer.run ? `<button class="btn out" data-a=pause>Pause</button><button class=btn data-a=stop>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume>Resume</button><button class="btn out" data-a=stop>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button>`}</div></div>
   ${k.ms.mode === 'worklog' ? `<div class=card><b>Milestone</b> <span class=am>${hm(L.toward(k))} / ${k.ms.every}h</span>${bar(L.toward(k), ev)}<div class=mu>${esc(k.ms.reward || '')}</div></div>` : k.ms.reward ? `<div class=card><b>Reward on completion:</b> ${esc(k.ms.reward)}</div>` : ''}
-  <div class=lbl>Work log · total ${hm(L.worked(S, k))}</div><div class=card>${ses.map((s) => `<div class="row sp"><span>${new Date(s.start).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · ${s.type === 'timer' ? 'Timer' : 'Manual'}${s.note ? ' · ' + esc(s.note) : ''}</span><b>${hm(s.dur)}</b></div>`).join('') || '<span class=mu>No sessions yet.</span>'}</div>
+  <div class=lbl>Work log · total ${hm(L.worked(S, k))}</div><div class=card>${ses.map((s) => `<div class="card row sp" style="margin:6px 0;padding:10px 12px;background:var(--sf)"><div><div style="font-weight:600;font-size:13px">${new Date(s.start).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · <span class=mu>${s.type === 'timer' ? 'Timer' : 'Manual'}</span></div>${s.note ? `<div class=mu style="margin-top:3px;font-size:12px;color:var(--tx)">💬 ${esc(s.note)}</div>` : ''}</div><b class=am style="font-size:14px">${hm(s.dur)}</b></div>`).join('') || '<span class=mu>No sessions yet.</span>'}</div>
   <div class=row><button class="btn out" data-a=lt data-id=${id}>+ Log time</button>${k.status !== 'Completed' ? `<button class=btn data-a=tc data-id=${id}>Mark complete</button>` : ''}</div>
   <div class=row style="margin-top:12px"><button class="btn out" data-a=et data-id=${id}>Edit</button><button class="btn out" data-a=hist data-kind=task data-id=${id}>History</button></div>
   <button class="btn danger" style="margin-top:12px" data-a=dt data-id=${id}>Delete task</button>`;
@@ -393,11 +393,23 @@ const A = {
   et: ({ k }) => fTask(k),
   start: ({ k, id }) => { if (timerBusy()) return; if (S.timer && S.timer.id !== id && !confirm('Another timer is running. Stop it and start this one?')) return; L.startTimer(S, k); save(); taskDetail(id); },
   pause: () => { if (timerBusy()) return; const i = S.timer?.id; L.pauseTimer(S); save(); i && taskDetail(i); }, resume: () => { if (timerBusy()) return; const i = S.timer?.id; L.resumeTimer(S); save(); i && taskDetail(i); },
-  stop: () => { if (timerBusy()) return; const i = S.timer?.id; if (!i) return; celebrated = false; L.stopTimer(S); save(); taskDetail(i); },
+  stop: () => {
+    if (timerBusy()) return; const id = S.timer?.id; if (!id) return;
+    const k = byId('tasks', id); const dur = L.elapsed(S, k);
+    sheet(`<div class="row sp"><h2 class=num>Save timer session</h2>${closeBtn}</div><p class=mu>Logged <b>${clock(dur)}</b> for "${esc(k.title)}"</p>${fld('Message / Note (optional)', '<input type=text name=note maxlength=200 placeholder="What did you work on?">')}<button class=btn data-a=sstop data-id=${id}>Save session</button>`);
+  },
+  sstop: ({ k, id }) => {
+    if (!S.timer) return sheet();
+    const note = val('note').trim(); celebrated = false;
+    const dur = L.elapsed(S, k);
+    S.timer = null;
+    if (k && dur >= 1) L.addSession(S, k, dur, 'timer', note);
+    sheet(); save(); taskDetail(id);
+  },
   reopen: ({ k, id }) => { L.reopen(S, k); save(); taskDetail(id); },
   dt: ({ k, e }) => { e.preventDefault(); if (confirm('Delete this task?')) { L.deleteTask(S, k); save(); leaveTask(); } },
-  lt: ({ id }) => sheet(`<div class="row sp"><h2 class=num>Log time</h2>${closeBtn}</div><div class=row>${fld('Hours', '<input type=number name=hh min=0 value=0>')}${fld('Minutes', '<input type=number name=mm min=0 max=59 value=30>')}</div>${fld('Note', '<input type=text name=note>')}<button class=btn data-a=slt data-id=${id}>Save</button>`),
-  slt: ({ k, id }) => { const d = (+val('hh') || 0) * 3600 + (+val('mm') || 0) * 60; if (d <= 0) return toast('Enter a duration'); L.addSession(S, k, d, 'manual', val('note')); sheet(); save(); taskDetail(id); },
+  lt: ({ id }) => sheet(`<div class="row sp"><h2 class=num>Log time</h2>${closeBtn}</div><div class=row>${fld('Hours', '<input type=number name=hh min=0 value=0>')}${fld('Minutes', '<input type=number name=mm min=0 max=59 value=30>')}</div>${fld('Message / Note (optional)', '<input type=text name=note maxlength=200 placeholder="What did you work on?">')}<button class=btn data-a=slt data-id=${id}>Save time log</button>`),
+  slt: ({ k, id }) => { const d = (+val('hh') || 0) * 3600 + (+val('mm') || 0) * 60; if (d <= 0) return toast('Enter a duration'); const note = val('note').trim(); L.addSession(S, k, d, 'manual', note); sheet(); save(); taskDetail(id); },
   claim: ({ id }) => { const r = byId('rewards', id); r.status = 'claimed'; r.claimedAt = Date.now(); L.log(S, 'reward_claimed', id); save(); render(); },
   open: ({ b, e }) => { e.preventDefault(); const u = b.dataset.url; if (safeUrl(u)) nat.openLink(u); },
   exp: exportJson, expcsv: exportCsv,
