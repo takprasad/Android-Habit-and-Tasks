@@ -7,35 +7,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errs.append('PAGEERROR '+str(e)))
     page.on('console', lambda m: errs.append('CONSOLE '+m.text) if m.type=='error' and '428' not in m.text else None)
     page.on('dialog', lambda d: d.accept())
-    import re as _re, urllib.parse as _up
-    G={'polls':0,'files':{},'n':1,'folder':None}; CORS={'access-control-allow-origin':'*','access-control-allow-headers':'*','access-control-allow-methods':'*'}
-    def google(route):
-        r=route.request; u=r.url; q=_up.unquote(u)
-        def js(o,st=200): route.fulfill(status=st,content_type='application/json',headers=CORS,body=json.dumps(o))
-        if r.method=='OPTIONS': return route.fulfill(status=204,headers=CORS)
-        if u.endswith('/device/code'): return js({'device_code':'D','user_code':'ABCD-EFGH','verification_url':'https://www.google.com/device','expires_in':600,'interval':1})
-        if u.endswith('/token'):
-            b=r.post_data or ''
-            if 'device_code' in b:
-                G['polls']+=1; return js({'error':'authorization_pending'},428) if G['polls']<2 else js({'access_token':'at1','refresh_token':'RT','expires_in':3600})
-            return js({'access_token':'at2','expires_in':3600})
-        if u.endswith('/revoke'): return js({})
-        if '/upload/drive/v3/files' in u:
-            parts=_re.split(r'--htb[a-z0-9]+',r.post_data); meta=json.loads(parts[1].split('\r\n\r\n')[1].strip()); content=parts[2].split('\r\n\r\n',1)[1].rstrip('-\r\n')
-            G['n']+=1; fid='f%d'%G['n']; G['files'][fid]={'name':meta['name'],'content':content,'created':G['n']}; return js({'id':fid,'name':meta['name'],'createdTime':'2026-10-09T10:00:0%dZ'%G['n']})
-        if '/drive/v3/files' in u and r.method=='POST': G['folder']='folder1'; return js({'id':'folder1'})
-        if '/drive/v3/files/folder1' in u: return js({'id':'folder1','trashed':False})
-        if 'alt=media' in u: return route.fulfill(status=200,headers=CORS,content_type='application/json',body=G['files'][u.split('/files/')[1].split('?')[0]]['content'])
-        if '/drive/v3/files?' in u:
-            if 'mimeType=' in q: return js({'files':[{'id':G['folder']}] if G['folder'] else []})
-            return js({'files':[{'id':k,'name':v['name'],'createdTime':'2026-10-09T10:00:0%dZ'%v['created'],'size':str(len(v['content']))} for k,v in sorted(G['files'].items(),key=lambda kv:-kv[1]['created'])]})
-        return js({'error':{'message':'unhandled '+u}},404)
-    page.route('https://oauth2.googleapis.com/**',google); page.route('https://www.googleapis.com/**',google)
-    def waitG(n,t=15000):
-        for _ in range(t//200):
-            if len(G['files'])>=n: return
-            page.wait_for_timeout(200)
-        raise AssertionError('timed out waiting for %d Drive files, have %d'%(n,len(G['files'])))
+    import re
     page.goto('http://localhost:8765/index.html?e2e'); page.wait_for_selector('#tabs button')
     def tab(n): page.click(f'#tabs button[data-id={n}]')
     # ---- quick add
@@ -118,7 +90,7 @@ with sync_playwright() as p:
     tab('today'); lv=page.locator('.lvlcard'); assert lv.count()==1 and 'level' in lv.inner_text().lower() and lv.locator('.bar').count()==1
     lv.click(); assert 'how levels work' in page.inner_text('#sheet').lower() and '5 × N × (N − 1)' in page.inner_text('#sheet'); page.click('[data-a=x]')
     # ---- stats
-    tab('settings'); st=page.inner_text('#app').lower(); assert 'level info' in st and 'how you earn coins' in st and 'per hour' in st and 'backup & restore' in st
+    tab('settings'); st=page.inner_text('#app').lower(); assert 'level info' not in st and 'per hour' in st and 'backup & restore' in st and 'back up now' in st and 'restore from a backup file' in st and 'export data (json)' not in st
     page.fill('#ncat','Fitness'); page.click('[data-a=addcat]'); assert S(page,"S.cats")==['Fitness'] and page.locator('.catchip', has_text='Fitness').count()==1
     page.fill('#ncat','fitness'); page.click('[data-a=addcat]'); assert S(page,"S.cats")==['Fitness'], 'duplicate ignoring case'
     page.click('[data-a=delcat][data-id=Fitness]'); assert S(page,"S.cats")==[]; page.fill('#ncat','Fitness'); page.press('#ncat','Enter'); assert S(page,"S.cats")==['Fitness']
@@ -129,15 +101,17 @@ with sync_playwright() as p:
     tab('settings'); assert 'still used' not in page.inner_text('#app'); page.click('[data-a=delcat][data-id=Fitness]'); assert 'Fitness' in S(page,"S.cats") and 'still used' in page.inner_text('#toast')
     S(page,"(S.cats.push('Temp'), null)"); tab('rewards'); tab('settings'); assert page.locator('.catchip', has_text='Temp').count()==1; page.click('[data-a=delcat][data-id=Temp]'); assert 'Temp' not in S(page,"S.cats")
     page.fill('input[name=sc]','3'); page.press('input[name=sc]','Tab'); assert S(page,"S.settings.coinsPerHour")==3; page.fill('input[name=sc]','2'); page.press('input[name=sc]','Tab')
-    # ---- Google Drive (network simulated)
-    assert page.is_visible('#dcid') and 'connect google drive' in page.inner_text('#app').lower()
-    page.fill('#dcid','x.apps.googleusercontent.com'); page.fill('#dsec','sec'); page.click('[data-a=dconn]'); page.wait_for_selector('#dcode'); assert page.inner_text('#dcode')=='ABCD-EFGH'
-    page.wait_for_function("document.querySelector('#app').innerText.includes('Connected')", timeout=15000); waitG(1)
-    page.wait_for_timeout(400); assert 'never' not in page.inner_text('#app').split('Last backup')[1][:30]
-    k0=S(page,"S.coins"); S(page,"(S.coins=777, null)"); page.click('[data-a=dnow]'); waitG(2)
-    S(page,"(S.coins=5, null)"); page.click('[data-a=drestore]'); page.wait_for_selector('[data-a=drest]'); assert page.locator('[data-a=drest]').count()==2
-    page.click('[data-a=drest] >> nth=0'); page.wait_for_function("window.__ht.S.coins===777", timeout=10000); assert 'Data restored' in page.inner_text('#toast')
-    tab('settings'); page.click('[data-a=ddisc]'); page.wait_for_function("!document.querySelector('#app').innerText.includes('Connected')", timeout=5000); assert page.is_visible('#dcid')
+    # ---- manual backup (share sheet / download) and restore (file picker)
+    assert 'last backup sent: never' in page.inner_text('#app').lower()
+    with page.expect_download() as dl: page.click('[data-a=bk]')
+    d=dl.value; assert re.match(r'^habit-task-backup-\d{4}-\d{2}-\d{2}-\d{4}\.json$', d.suggested_filename), d.suggested_filename
+    body=open(d.path(), encoding='utf-8').read(); J=json.loads(body); assert J['coins']==S(page,"S.coins") and len(J['tasks'])==S(page,"S.tasks.length") and 'shared' in page.inner_text('#toast').lower()
+    assert 'never' not in page.inner_text('#app').lower().split('last backup sent:')[1][:20], 'last backup time is shown'
+    assert page.evaluate("window.__ht.store.kvGet('lastBackup')") is not None
+    S(page,"(S.coins=777, null)"); page.set_input_files('#imp', files=[{'name':'b.json','mimeType':'application/json','buffer':body.encode()}]); page.wait_for_function("window.__ht.S.coins===%d" % J['coins'], timeout=8000)
+    assert 'Data restored' in page.inner_text('#toast'), 'restore offers undo'; page.click('#undo'); assert S(page,"S.coins")==777; tab('settings'); page.set_input_files('#imp', files=[{'name':'b.json','mimeType':'application/json','buffer':body.encode()}]); page.wait_for_function("window.__ht.S.coins===%d" % J['coins'], timeout=8000)
+    tab('settings'); page.set_input_files('#imp', files=[{'name':'bad.json','mimeType':'application/json','buffer':b'{nope'}]); page.wait_for_timeout(300); assert 'Invalid file' in page.inner_text('#toast') and S(page,"S.coins")==J['coins']
+    tab('settings')
     page.click('[data-a=tab][data-id=stats]'); page.wait_for_selector('.heat'); page.screenshot(path='/tmp/shot_stats.png', full_page=True)
     page.click('#mseg label:has-text("Tasks")'); assert 'estimates vs actual' in page.inner_text('#app').lower()
     page.click('#mseg label:has-text("Weekly review")'); assert 'this week' in page.inner_text('#app'); page.screenshot(path='/tmp/shot_week.png', full_page=True)

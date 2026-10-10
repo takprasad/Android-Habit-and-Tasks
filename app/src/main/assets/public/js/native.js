@@ -11,7 +11,6 @@ const plug = (n) => {
 };
 const App = plug('App'), Browser = plug('Browser'), StatusBar = plug('StatusBar'), SystemBars = plug('SystemBars'), Splash = plug('SplashScreen');
 const LN = plug('LocalNotifications'), Share = plug('Share'), FS = plug('Filesystem');
-const Http = isNative ? (cap.Plugins?.CapacitorHttp || plug('CapacitorHttp')) : null;
 const safe = async (f) => { try { return await f(); } catch (e) { console.warn('[native]', e?.message || e); return undefined; } };
 
 export async function onBack(handler) { if (App) await App.addListener('backButton', () => { if (!handler()) App.exitApp(); }); }
@@ -31,23 +30,14 @@ export async function openLink(url) {
 export async function exportFile(name, mime, text) {
   if (FS && Share) {
     const r = await FS.writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' });
-    await Share.share({ title: name, dialogTitle: 'Export data', url: r.uri });
-    return;
+    try { await Share.share({ title: name, dialogTitle: 'Save to Drive or another app', url: r.uri }); return true; }
+    catch (e) { if (/cancel/i.test(String(e?.message || e))) return false; throw e; } // closed the share sheet without choosing
   }
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  return true;
 }
 
-/** POST a form -> { status, json }. Uses Android's native HTTP stack (no browser CORS rules); plain fetch on the web. */
-export async function postForm(url, body) {
-  const asJson = (d) => { if (typeof d === 'string') { try { return JSON.parse(d); } catch { return {}; } } return d || {}; };
-  if (Http) {
-    try { const r = await Http.post({ url, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, data: body }); return { status: r.status, json: asJson(r.data) }; }
-    catch (e) { if (typeof e?.status === 'number') return { status: e.status, json: asJson(e.data) }; throw e; }
-  }
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
-  let json = {}; try { json = await r.json(); } catch { /* not json */ } return { status: r.status, json };
-}
 /** Share plain text: share sheet on Android, Web Share / clipboard in a browser. */
 export async function shareText(title, text) {
   if (Share) return safe(() => Share.share({ title, text, dialogTitle: title }));

@@ -36,6 +36,11 @@ await t('localStorage quota error never blocks a save', async () => {
   const s = await fresh(); await s.load(); localStorage.full = true; await saveState(s, { v: 1, coins: 10 }); localStorage.full = false;
   const s2 = await fresh(); assert.equal((await s2.load()).coins, 10, 'saved in Preferences despite quota error');
 });
+await t('kv area (e.g. last backup time): primary store only, never mirrored, survives restart, removable', async () => {
+  const s = await fresh(); await s.load(); await s.kvSet('lastBackup', '12345'); assert.equal(await s.kvGet('lastBackup'), '12345');
+  assert.ok(prefs.has('ht_kv_lastBackup')); assert.equal([...localStorage._m.keys()].some((k) => k.includes('lastBackup')), false, 'not copied to localStorage');
+  const s2 = await fresh(); assert.equal(await s2.kvGet('lastBackup'), '12345'); await s2.kvRemove('lastBackup'); assert.equal(await s2.kvGet('lastBackup'), null);
+});
 await t('wipe clears both stores', async () => {
   const s = await fresh(); await s.load(); s.init(() => ({})); await s.wipe();
   assert.equal([...prefs.keys()].filter((k) => k.startsWith('ht2_')).length, 0); assert.equal([...localStorage._m.keys()].filter((k) => k.startsWith('ls_')).length, 0);

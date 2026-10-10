@@ -1,23 +1,24 @@
 # Feature update (overlay onto android/ project)
-Copy `app/` over your project (same folder layout). New file: js/drive.js. Changed: js/app.js, js/logic.js, js/native.js,
-js/storage.js, styles.css. No new plugins or permissions (INTERNET is already declared). Old data and exports keep working.
+Copy `app/` over your project (same folder layout). Changed: js/app.js, js/logic.js, js/native.js, js/storage.js, styles.css.
+No new plugins or permissions. Old data and exports keep working.
 
-## What's new
-1. **Coins = 2 per hour of logged time** (timer or manual). Part-hours carry over, so 30 min = 1 coin and three 10-minute
-   logs add up to 1 coin. Adjustable in Settings ("Supercoins per hour"), 0 turns it off. Replaces the old per-session coins.
-2. **Google Drive backup**: weekly automatic backup (runs the first time the app is opened after 7 days), **Back up now**,
-   **Restore…** (pick any backup; Undo is offered), Disconnect. Uses the narrow drive.file scope: the app only sees its own files.
-   One-time free setup: see GOOGLE_DRIVE_SETUP.md. 8 newest backups kept.
-3. **Create your own categories** for habits and tasks (type a new name in either form, or manage them in Settings > Categories).
-   Names are de-duplicated ignoring case; a category still in use cannot be deleted.
-4. **Level progress bar moved to the Today screen** (tap it for "How levels work").
-5. **37 badges** (was 12), every one with a progress counter (e.g. 7 / 25) and earned ones listed first.
-6. **Settings > Level info card**: how levels are decided (lifetime coins earned, level N starts at 5 x N x (N-1)), a table of levels,
-   and how coins are earned.
-7. **Improvements:** Settings regrouped into clear cards; backup status ("Last backup", errors, nudge colour when over 8 days old);
-   category usage counts; first Drive backup runs right after connecting; empty apps never push good backups out of rotation;
-   wiping data also forgets the Drive sign-in; home header no longer wraps on long weekday names.
+**If you applied the previous overlay, delete `app/src/main/assets/public/js/drive.js` and `GOOGLE_DRIVE_SETUP.md`**
+(the Google sign-in approach was replaced; nothing references them any more).
 
-## Tests (all included)
-`node tests/logic.features.test.mjs` (27) · `node tests/storage.test.mjs` (10) · `node tests/drive.test.mjs` (12, fake Google server)
-`python3 tests/e2e_ui.py` (playwright; serve app/src/main/assets/public on :8765; simulates the Google endpoints).
+## Latest changes
+- **Settings: "Level info" card removed.** Level info is still one tap away: tap the level bar on the Today screen.
+- **Backup & restore to a Google Drive folder you choose, manually, on the phone (no Google account setup):**
+  - *Back up now* creates `habit-task-backup-YYYY-MM-DD-HHMM.json` and opens the Android share sheet. Choose **Drive**, pick the
+    folder, tap **Save**. (Any other destination works too.)
+  - *Restore from a backup file* opens the system file picker. Browse to the folder in **Drive**, choose the file, confirm.
+    Undo is offered right afterwards; an unreadable file changes nothing.
+  - Shows "Last backup sent" (amber when over a week old or never). The time is kept on the device only, never inside exports.
+  - The separate "Export data (JSON)" and "Import data" buttons were folded into this card; "Export data (CSV)" stays under Your data.
+  - "Delete all data" also clears the last-backup time.
+
+## Everything from earlier rounds is still included
+Coins per hour of logged time, custom categories, level bar on Today, 37 badges with progress, regrouped Settings, localStorage mirror,
+dashboard ring + cards, recurring tasks, steps, freezes, quick add, calendar, pomodoro, undo, and the rest.
+
+Tests: `node tests/logic.features.test.mjs` (27) · `node tests/storage.test.mjs` (11) · `python3 tests/e2e_ui.py`
+(playwright; serve app/src/main/assets/public on :8765; downloads a backup and restores it).

@@ -1,7 +1,6 @@
 /* Habit & Task Tracker - UI layer. Markup and class names are intentionally identical to the web version. */
 import * as L from './logic.js';
 import * as store from './storage.js';
-import { createDrive } from './drive.js';
 import * as nat from './native.js';
 
 const { today, add, esc, WD, hm, safeUrl, isOpen, overdue } = L;
@@ -10,7 +9,6 @@ const $ = (s) => document.querySelector(s);
 
 /* ---------- state ---------- */
 let S = L.newState();
-const drive = createDrive({ kv: { get: store.kvGet, set: store.kvSet, remove: store.kvRemove }, postForm: nat.postForm });
 let bootNotice = '';
 let readyRes; const ready = new Promise((r) => { readyRes = r; }); // notification actions wait for the stored data to load
 async function initApp() {
@@ -27,7 +25,7 @@ async function initApp() {
   theme(); L.evaluate(S); store.save(); lastOver = overSig(); render(); sync();
   if (bootNotice) toast(bootNotice);
   readyRes();
-  loadDrive().then(() => { if (tab === 'settings') render(); maybeAutoBackup(); });
+  store.kvGet('lastBackup').then((v) => { lastBackup = +v || 0; if (tab === 'settings') render(); }).catch(() => {});
   nat.hideSplash();
   if (new URLSearchParams(location.search).has('e2e')) window.__ht = { get S() { return S; }, L, store, back: handleBack };
 }
@@ -444,19 +442,13 @@ function levelInfoHtml() {
   <ul class=ul><li>Complete a task: High 🪙 5 · Medium 🪙 3 · Low 🪙 2, plus any bonus you set</li><li>Log time on a task (timer or manual): 🪙 ${rate} per hour</li></ul>
   <p style="margin-bottom:0">You are <b>level ${li.lv} · ${li.name}</b> with 🪙 ${li.earned} earned, ${li.b - li.earned} more for level ${li.lv + 1}.</p>`;
 }
-function driveCard() {
-  const d = driveSt, c = (name, label, on) => `<label class=chip><input type=checkbox name=${name} ${on ? 'checked' : ''}>${label}</label>`;
-  if (!d.connected) return `<p class=mu style="margin-top:0">Back up to a Google Drive folder every week and restore any time. This uses your own free Google credentials, set up once.</p>
-  <details class=more><summary>How to get the Client ID and secret</summary><ol class=ul style="padding-bottom:8px"><li>Open console.cloud.google.com and create a project</li><li>Enable the <b>Google Drive API</b></li><li>Set up the OAuth consent screen (External), add the scope <b>drive.file</b>, then press <b>Publish app</b></li><li>Credentials → Create OAuth client ID → type <b>TVs and Limited Input devices</b></li><li>Paste its Client ID and Client secret below</li></ol><p class=mu>Full steps are in GOOGLE_DRIVE_SETUP.md. The app can only see files it creates itself.</p></details>
-  ${fld('Client ID', `<input type=text id=dcid autocomplete=off autocapitalize=off value="${esc(d.clientId || '')}" placeholder="1234-abc.apps.googleusercontent.com">`)}
-  ${fld('Client secret', `<input type=text id=dsec autocomplete=off autocapitalize=off style="-webkit-text-security:disc" placeholder="${d.hasSecret ? '(saved, leave empty to keep)' : 'GOCSPX-…'}">`)}
-  ${d.lastError ? `<p class="mu dg">${esc(d.lastError)}</p>` : ''}<button class=btn data-a=dconn>Connect Google Drive</button>`;
-  const stale = !d.last || Date.now() - d.last > 8 * 864e5;
-  return `<div class="row sp"><b>✓ Connected</b><span class=mu>Folder “HabitTaskTracker Backups”</span></div>
-  <p class=mu style="margin:6px 0">Last backup: <b class="${stale ? 'am' : ''}">${d.last ? new Date(d.last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'never'}</b></p>${d.lastError ? `<p class="mu dg" style="margin:0 0 6px">Last attempt failed: ${esc(d.lastError)}</p>` : ''}
-  ${c('dauto', 'Back up automatically once a week', d.auto)}<p class=mu style="margin:2px 0 10px">Android has no reliable background timer, so the weekly backup runs the first time you open the app after 7 days.</p>
-  <div class=row style="gap:10px;margin-bottom:10px"><button class=btn data-a=dnow ${driveBusy ? 'disabled' : ''}>${driveBusy ? 'Backing up…' : 'Back up now'}</button><button class="btn out" data-a=drestore>Restore…</button></div>
-  <button class="btn out" data-a=ddisc>Disconnect</button>`;
+function backupCard() {
+  const stale = !lastBackup || Date.now() - lastBackup > 7 * 864e5, when = lastBackup ? new Date(lastBackup).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'never';
+  return `<p class=mu style="margin-top:0">Save a copy of all your data to a folder in your own Google Drive and bring it back whenever you need it. You pick the folder yourself, right on this phone.</p>
+  <p class=mu style="margin:0 0 12px">Last backup sent: <b class="${stale ? 'am' : ''}">${when}</b>${stale ? ' · a weekly backup is a good habit' : ''}</p>
+  <button class=btn data-a=bk style="margin-bottom:10px">Back up now</button>
+  <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept=".json,application/json" id=imp hidden></label>
+  <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
 }
 function vSettings() {
   const n = S.settings.notif, days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -467,13 +459,12 @@ function vSettings() {
  <button class="btn out" data-a=tab data-id=stats style="margin-bottom:12px">📊 Statistics &amp; weekly review</button>
  ${sec('Appearance', `<div class=lbl style="margin-top:0">Theme</div>${seg('theme', ['system', 'light', 'dark'], S.theme)}${fld('Week starts on', `<select name=ws>${[1, 2, 3, 4, 5, 6, 0].map((i) => `<option value=${i} ${S.settings.weekStart === i ? 'selected' : ''}>${days[i]}</option>`).join('')}</select>`)}`)}
  ${sec('Coins for logged time', `${fld('Supercoins per hour logged on tasks', `<input type=number name=sc min=0 max=100 step=0.5 value="${S.settings.coinsPerHour ?? 2}">`)}<p class=mu style="margin:-4px 0 0">Timer and manual sessions both count. Part-hours add up, so 30 minutes at 2 per hour pays 1 coin. Set 0 to turn off.</p>`)}
- ${sec('Level info', levelInfoHtml())}
  ${sec('Categories', `<div>${cats}</div><p class=mu style="margin:0 0 8px">The number is how many habits and tasks use it. Only your own, unused categories can be deleted.</p><div class=row style="gap:8px"><input type=text id=ncat maxlength=24 placeholder="New category name" aria-label="New category name"><button class="btn sm" data-a=addcat style="flex:none">Add</button></div>`)}
  ${sec('Notifications', `${c('nOn', 'Enable notifications', n.on)}<p class=mu>Android asks for permission when you turn this on. Reminders can arrive a few minutes late, so no exact-alarm permission is needed.</p>
  <div id=nopts class="${n.on ? '' : 'hide'}">${c('nDaily', 'Daily reminder', n.daily)}${c('nRisk', 'Habit at risk', n.risk)}${c('nDue', 'Task due soon', n.due)}${c('nTimer', 'Timer running 3h+', n.timer)}${c('nReward', 'Reward unlocked', n.reward)}
  ${fld('Daily reminder time', `<input type=time name=nTime value="${n.dailyTime}">`)}</div>`)}
- ${sec('Backup &amp; restore · Google Drive', driveCard())}
- ${sec('Your data', `<button class="btn out" data-a=exp style="margin-bottom:10px">Export data (JSON)</button><button class="btn out" data-a=expcsv style="margin-bottom:10px">Export data (CSV)</button><label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Import data<input type=file accept=".json,application/json" id=imp hidden></label><button class="btn danger" data-a=wipe>Delete all data</button>`)}`;
+ ${sec('Backup &amp; restore', backupCard())}
+ ${sec('Your data', `<button class="btn out" data-a=expcsv style="margin-bottom:10px">Export data (CSV)</button><button class="btn danger" data-a=wipe>Delete all data</button>`)}`;
 }
 
 let lastBars = null;
@@ -483,44 +474,8 @@ function theme() {
   const d = isDark(); if (d !== lastBars) { lastBars = d; nat.setBars(d); }
 }
 
-/* ---------- Google Drive backup ---------- */
-let driveSt = { configured: false, connected: false, last: 0, auto: true, lastError: '', clientId: '', hasSecret: false }, driveBusy = false, authRun = null;
-async function loadDrive() { try { driveSt = await drive.status(); } catch { /* keep the previous state */ } }
-const driveErr = (e) => e?.message || 'Something went wrong';
-const fmtDT = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-async function doBackup(manual) {
-  if (driveBusy) return; driveBusy = true; if (tab === 'settings') render(); if (manual) toast('Backing up to Google Drive…');
-  try { const r = await drive.backup(JSON.stringify(S, null, 1)); await loadDrive(); toast('☁ Backup saved: ' + r.name); }
-  catch (e) { await loadDrive(); toast('Backup failed: ' + driveErr(e)); }
-  finally { driveBusy = false; if (tab === 'settings') render(); }
-}
-/** Weekly backup: runs when the app opens / resumes and 7+ days have passed since the last one. */
-async function maybeAutoBackup() {
-  if (driveBusy || !driveSt.connected) return; driveBusy = true;
-  try {
-    const r = await drive.autoBackup(() => JSON.stringify(S, null, 1), () => !S.habits.length && !S.tasks.length);
-    if (r.ran) { await loadDrive(); toast(r.ok ? '☁ Weekly backup saved to Google Drive' : 'Weekly Drive backup failed: ' + r.error); }
-  } catch { /* never disturb the user */ } finally { driveBusy = false; if (tab === 'settings') render(); }
-}
-async function driveConnect() {
-  try { await drive.setCredentials($('#dcid')?.value, $('#dsec')?.value); } catch (e) { return toast(driveErr(e)); }
-  let auth; try { auth = await drive.startAuth(); } catch (e) { await loadDrive(); return toast(driveErr(e)); }
-  const run = authRun = { cancelled: false };
-  sheet(`<div class="row sp"><h2 class=num>Connect Google Drive</h2><button class=ic data-a=dcancel aria-label=Cancel>✕</button></div>
-   <p>1. Open <b>google.com/device</b> on this phone.</p><button class="btn out" data-a=dopen data-id="${esc(auth.url)}">Open google.com/device</button>
-   <p style="margin-top:16px">2. Enter this code and approve access:</p><div class="num code" id=dcode>${esc(auth.userCode)}</div>
-   <p class=mu>Waiting for your approval… keep this screen open.</p><button class="btn out" data-a=dcancel>Cancel</button>`);
-  try { await drive.pollAuth(auth, () => run.cancelled); }
-  catch (e) { if (run.cancelled) return; sheet(); await loadDrive(); render(); return toast('Could not connect: ' + driveErr(e)); }
-  authRun = null; sheet(); await loadDrive(); render(); toast('Google Drive connected'); await doBackup(true);
-}
-async function driveRestoreList() {
-  sheet(`<div class="row sp"><h2 class=num>Restore from Drive</h2>${closeBtn}</div><p class=mu>Loading your backups…</p>`);
-  let ls; try { ls = await drive.list(); } catch (e) { sheet(); return toast('Could not load backups: ' + driveErr(e)); }
-  sheet(`<div class="row sp"><h2 class=num>Restore from Drive</h2>${closeBtn}</div><p class=mu>Newest first. Restoring replaces your current data, and you can undo it right afterwards.</p>
-   ${ls.map((f) => `<div class="card row sp"><div class=grow><b>${esc(fmtDT(f.created))}</b><div class=mu>${Math.max(1, Math.round(f.size / 1024))} KB</div></div><button class="btn sm out" data-a=drest data-id="${esc(f.id)}">Restore</button></div>`).join('') || '<p class=mu>No backups yet. Use “Back up now” first.</p>'}`);
-}
-
+/* ---------- manual backup (share sheet -> Drive) & restore (file picker) ---------- */
+let lastBackup = 0;
 /* ---------- actions ---------- */
 const byId = (a, id) => S[a].find((x) => x.id === id);
 function afterTask(id) { tab === 'task' ? taskDetail(id) : render(); }
@@ -550,7 +505,7 @@ async function importFile(file) {
   if (!file) return;
   if (file.size > 50e6) return toast('File too large – nothing was changed');
   let ns; try { ns = L.parseImport(await file.text()); } catch { return toast('Invalid file – nothing was changed'); }
-  await applyImport(ns, 'this file');
+  await applyImport(ns, 'this backup file');
 }
 function openHabitSheet(kind, id) { histLimit = 50; historySheet(kind, id); }
 
@@ -628,24 +583,19 @@ const A = {
   /* habit notes + sharing */
   hnote: ({ h }) => { const lt = L.latestToday(S, h); if (!lt) return; L.setNote(S, lt.id, val('hnote'), val('mood')); save(); habitDetail(h.id); toast('Note saved'); },
   shr: async ({ h }) => { const r = await nat.shareText(h.name, `${h.ms.kind === 'streak' ? '🔥' : '🎯'} ${h.name}: ${h.prog} / ${h.ms.target} ${unit(h)} (best ${h.best}) · tracked with Habit & Task Tracker`); if (r === 'copied') toast('Copied to clipboard'); },
-  /* level info, categories, Google Drive */
+  /* level info, categories, backup */
   lvinfo: () => sheet(`<div class="row sp"><h2 class=num>How levels work</h2>${closeBtn}</div>${levelInfoHtml()}`),
   addcat: () => { const c = L.addCat(S, $('#ncat')?.value); if (!c) return toast(`Enter a name (up to ${L.CAT_MAX} characters, up to ${L.CUSTOM_MAX} categories)`); save(); render(); toast(`Category “${c}” is ready to use`); },
   delcat: ({ id }) => { const r = L.removeCat(S, id); if (r === 'used') return toast(`“${id}” is still used by ${L.catUsage(S, id)} item(s)`); if (r === 'ok') { save(); render(); } },
-  dconn: () => driveConnect(),
-  dcancel: () => { if (authRun) authRun.cancelled = true; authRun = null; sheet(); },
-  dopen: ({ b }) => { const u = b.dataset.id; if (u.startsWith('https://')) nat.openLink(u); },
-  dnow: () => doBackup(true),
-  drestore: () => driveRestoreList(),
-  drest: async ({ id }) => {
-    sheet(); toast('Downloading backup…'); let text;
-    try { text = await drive.download(id); } catch (e) { return toast('Could not download: ' + driveErr(e)); }
-    let ns; try { ns = L.parseImport(text); } catch { return toast('That backup could not be read – nothing was changed'); }
-    await applyImport(ns, 'this Drive backup');
+  bk: async () => {
+    if (!S.habits.length && !S.tasks.length && !S.rewards.length) return toast('Nothing to back up yet');
+    const d = new Date(), p2 = (n) => String(n).padStart(2, '0'), name = `habit-task-backup-${today()}-${p2(d.getHours())}${p2(d.getMinutes())}.json`;
+    let ok; try { ok = await nat.exportFile(name, 'application/json', JSON.stringify(S, null, 1)); } catch (e) { return toast('Could not start the backup: ' + (e?.message || e)); }
+    if (ok === false) return toast('Backup cancelled');
+    lastBackup = Date.now(); store.kvSet('lastBackup', String(lastBackup)).catch(() => {}); if (tab === 'settings') render();
+    toast('Backup file shared. Check that it saved in your Drive folder.');
   },
-  ddisc: async () => { if (!confirm('Disconnect Google Drive? Your existing backups stay in Drive.')) return; await drive.disconnect(); await loadDrive(); render(); toast('Disconnected'); },
-  exp: exportJson, expcsv: exportCsv,
-  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); await drive.forget(); await loadDrive(); S = L.newState(); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
+  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); await store.kvRemove('lastBackup'); lastBackup = 0; S = L.newState(); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
 };
 document.addEventListener('click', (e) => {
   if (e.target.id === 'sheet') return sheet();
@@ -662,7 +612,6 @@ document.addEventListener('change', async (e) => {
   if (n === 'mode') $('#wl').classList.toggle('hide', t.value === 'Once on completion');
   if (n === 'theme') { S.theme = t.value; theme(); save(); }
   if (n === 'sc') { const v = Math.max(0, Math.min(100, Math.round((+t.value || 0) * 2) / 2)); S.settings.coinsPerHour = v; save(); toast(v ? `🪙 ${v} per hour of logged time` : 'Coins for logged time turned off'); }
-  if (n === 'dauto') { drive.setAuto(t.checked).then(loadDrive).then(() => toast(t.checked ? 'Weekly backup on' : 'Weekly backup off')); }
   if (n === 'ws') { L.evaluate(S); S.settings.weekStart = +t.value; for (const h of S.habits) if (!h.archived && (h.type === 'weekly' || h.type === 'days')) h.evalFrom = L.period(S, h, today())[0]; save(); render(); }
   const N = { nDaily: 'daily', nRisk: 'risk', nDue: 'due', nTimer: 'timer', nReward: 'reward' };
   if (n === 'nOn') {
@@ -704,7 +653,7 @@ const overSig = () => S.tasks.filter(overdue).map((k) => k.id).join();
 function refresh() {
   if (L.evaluate(S)) store.save();
   lastKey = today() + '|' + L.tzKey(); lastOver = overSig();
-  if (tab !== 'task') render(); sync(); maybeAutoBackup();
+  if (tab !== 'task') render(); sync();
 }
 nat.onAppState((active) => { if (active) refresh(); else store.flush(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) store.flush(); else refresh(); });
