@@ -1,0 +1,151 @@
+from playwright.sync_api import sync_playwright
+import json, sys
+errs=[]
+def S(page, expr): return page.evaluate(f"(() => {{ const S = window.__ht.S, L = window.__ht.L; return {expr}; }})()")
+with sync_playwright() as p:
+    b=p.chromium.launch(); ctx=b.new_context(viewport={'width':390,'height':844}, device_scale_factor=2); page=ctx.new_page()
+    page.on('pageerror', lambda e: errs.append('PAGEERROR '+str(e)))
+    page.on('console', lambda m: errs.append('CONSOLE '+m.text) if m.type=='error' and '428' not in m.text else None)
+    page.on('dialog', lambda d: d.accept())
+    import re as _re, urllib.parse as _up
+    G={'polls':0,'files':{},'n':1,'folder':None}; CORS={'access-control-allow-origin':'*','access-control-allow-headers':'*','access-control-allow-methods':'*'}
+    def google(route):
+        r=route.request; u=r.url; q=_up.unquote(u)
+        def js(o,st=200): route.fulfill(status=st,content_type='application/json',headers=CORS,body=json.dumps(o))
+        if r.method=='OPTIONS': return route.fulfill(status=204,headers=CORS)
+        if u.endswith('/device/code'): return js({'device_code':'D','user_code':'ABCD-EFGH','verification_url':'https://www.google.com/device','expires_in':600,'interval':1})
+        if u.endswith('/token'):
+            b=r.post_data or ''
+            if 'device_code' in b:
+                G['polls']+=1; return js({'error':'authorization_pending'},428) if G['polls']<2 else js({'access_token':'at1','refresh_token':'RT','expires_in':3600})
+            return js({'access_token':'at2','expires_in':3600})
+        if u.endswith('/revoke'): return js({})
+        if '/upload/drive/v3/files' in u:
+            parts=_re.split(r'--htb[a-z0-9]+',r.post_data); meta=json.loads(parts[1].split('\r\n\r\n')[1].strip()); content=parts[2].split('\r\n\r\n',1)[1].rstrip('-\r\n')
+            G['n']+=1; fid='f%d'%G['n']; G['files'][fid]={'name':meta['name'],'content':content,'created':G['n']}; return js({'id':fid,'name':meta['name'],'createdTime':'2026-10-09T10:00:0%dZ'%G['n']})
+        if '/drive/v3/files' in u and r.method=='POST': G['folder']='folder1'; return js({'id':'folder1'})
+        if '/drive/v3/files/folder1' in u: return js({'id':'folder1','trashed':False})
+        if 'alt=media' in u: return route.fulfill(status=200,headers=CORS,content_type='application/json',body=G['files'][u.split('/files/')[1].split('?')[0]]['content'])
+        if '/drive/v3/files?' in u:
+            if 'mimeType=' in q: return js({'files':[{'id':G['folder']}] if G['folder'] else []})
+            return js({'files':[{'id':k,'name':v['name'],'createdTime':'2026-10-09T10:00:0%dZ'%v['created'],'size':str(len(v['content']))} for k,v in sorted(G['files'].items(),key=lambda kv:-kv[1]['created'])]})
+        return js({'error':{'message':'unhandled '+u}},404)
+    page.route('https://oauth2.googleapis.com/**',google); page.route('https://www.googleapis.com/**',google)
+    def waitG(n,t=15000):
+        for _ in range(t//200):
+            if len(G['files'])>=n: return
+            page.wait_for_timeout(200)
+        raise AssertionError('timed out waiting for %d Drive files, have %d'%(n,len(G['files'])))
+    page.goto('http://localhost:8765/index.html?e2e'); page.wait_for_selector('#tabs button')
+    def tab(n): page.click(f'#tabs button[data-id={n}]')
+    # ---- quick add
+    tab('tasks'); page.fill('#qa','Pay rent every month on 1st #home #bills ~30m !high'); page.press('#qa','Enter')
+    t=S(page,"S.tasks[0]"); print('quick add ->', json.dumps({k:t[k] for k in ('title','pri','due','tags','est','rec')}))
+    assert t['title']=='Pay rent' and t['pri']=='High' and t['tags']==['home','bills'] and t['est']==30 and t['rec']['u']=='month', t
+    assert page.locator('.card .row', has_text='Pay rent').count()>=1
+    assert '🔁' in page.inner_text('#app')
+    page.fill('#qa','Call mom tomorrow 6pm !low #family'); page.click('[data-a=qa]')
+    assert S(page,"S.tasks.length")==2
+    page.screenshot(path='/tmp/shot_tasks.png')
+    # tag filter + sort
+    page.click('button.chip:has-text("#family")'); assert page.locator('#app .card .row .grow', has_text='Call mom').count()==1 and page.locator('#app .card .row .grow', has_text='Pay rent').count()==0
+    page.click('button.chip.on:has-text("#family")'); assert page.locator('#app .card .row .grow', has_text='Pay rent').count()==1, 'tapping the active tag clears the filter'
+    page.select_option('select[name=sort]','pri')
+    # FAB hides while a sheet is open; quick-date chips fill the due date
+    page.click('.fab-btn'); assert not page.is_visible('.fab-btn'); page.click('[data-a=qd][data-id="1"]'); assert page.input_value('#sheet input[name=due]')==S(page,"L.add(L.today(),1)")
+    page.click('[data-a=qd][data-id=x]'); assert page.input_value('#sheet input[name=due]')==''; page.click('[data-a=x]'); assert page.is_visible('.fab-btn')
+    # Today groups overdue tasks separately
+    S(page,"(S.tasks.push({id:L.uid(),title:'Old one',pri:'Low',cat:'Work',due:L.add(L.today(),-3),time:null,status:'Not Started',start:L.today(),mp:0,fired:0,tags:[],sub:[],est:0,ms:{mode:'once',every:5,after:'reset',reward:'',url:''}}), null)")
+    tab('today'); tx=page.inner_text('#app').lower(); assert 'overdue · 1' in tx
+    assert page.locator('.tile').count()==2 and 'coins earned' in tx and 'tasks pending' in tx and page.locator('.hero').count()==0 and 'up next' not in tx
+    assert page.locator('.tile >> nth=1').inner_text().split('\n')[1].strip().isdigit()
+    ct=page.locator('.tile >> nth=0').inner_text().lower(); wk=S(page,"L.weekReview(S,0).earned"); assert 'this week' in ct and str(wk) in ct.split('\n')[1], (ct, wk)
+    S(page,"(S.audit.push({type:'coins_earned',id:'x',p:{earned:7,coins:1},at:Date.now()-20*864e5}), S.earned+=7, null)"); tab('rewards'); tab('today')
+    assert page.locator('.tile >> nth=0').inner_text().split('\n')[1].strip()==str(wk), 'older coins are not counted in the weekly card'
+    S(page,"(S.tasks.pop(), null)"); tab('tasks')
+
+    # ---- task detail: steps
+    page.click('#app .card .grow:has-text("Pay rent")'); page.wait_for_selector('#sn')
+    for s_ in ['Open bank app','Transfer amount']:
+        page.fill('#sn', s_); page.press('#sn','Enter')
+    assert S(page,"S.tasks[0].sub.length")==2
+    page.click('[data-a=sub] >> nth=0'); assert S(page,"S.tasks[0].sub[0].d")==1
+    assert 'steps · 1/2' in page.inner_text('#app').lower()
+    page.screenshot(path='/tmp/shot_detail.png', full_page=True)
+    # ---- complete recurring + undo
+    page.click('button[data-a=tc]'); 
+    assert S(page,"S.tasks.length")==3, S(page,"S.tasks.length"); nx=S(page,"S.tasks[2]"); print('next instance due', nx['due'], 'subs reset', [x['d'] for x in nx['sub']])
+    assert 'Undo' in page.inner_text('#toast'); page.click('#undo')
+    assert S(page,"S.tasks.length")==2 and S(page,"S.tasks[0].status")!='Completed' and S(page,"S.coins")==0
+    page.click('button[data-a=tc]'); assert S(page,"S.tasks.length")==3 and S(page,"S.coins")>0
+    # ---- duplicate + delete + undo
+    page.click('button[data-a=back]'); 
+    page.click('#app .card .grow:has-text("Call mom")'); page.click('[data-a=dup]'); assert S(page,"S.tasks.length")==4
+    page.click('[data-a=dt]'); assert S(page,"S.tasks.length")==3; page.click('#undo'); assert S(page,"S.tasks.length")==4
+    # ---- edit task with weekly repeat
+    page.click('#app .card .grow:has-text("Call mom")'); page.click('[data-a=et]')
+    page.fill('#sheet input[name=due]', S(page,"L.add(L.today(),1)")); page.click('#sheet label:has-text("Weeks")'); assert page.is_visible('#rw')
+    page.click('#sheet input[name=rday][value="0"] >> xpath=..'); page.click('#sheet input[name=rday][value="3"] >> xpath=..'); page.fill('#sheet input[name=tags]','Family, #kids, bad tag!'); page.fill('#sheet input[name=est]','45')
+    page.click('[data-a=st]'); k=S(page,"S.tasks.find(x=>x.title==='Call mom')"); print('edited', k['rec'], k['tags'], k['est']); assert k['rec']['u']=='week' and k['rec']['days']==[0,3] and 'kids' in k['tags'] and k['est']==45
+    # repeat without due is rejected
+    page.click('[data-a=et]'); page.fill('#sheet input[name=due]',''); page.click('[data-a=st]'); assert 'need a due date' in page.inner_text('#toast'); page.click('[data-a=x]')
+    # ---- pomodoro
+    page.click('[data-a=startp]'); page.wait_for_selector('[data-pomo]'); print('pomo:', page.inner_text('[data-pomo]')); assert S(page,"S.timer.pomo")==25
+    page.wait_for_timeout(800); page.click('[data-a=stop]'); page.click('[data-a=sstop]')
+    c0=S(page,"S.coins"); e0=S(page,"S.earned"); page.click('[data-a=lt]'); page.fill('#sheet input[name=mm]','30'); page.click('[data-a=slt]')
+    assert S(page,"S.coins")==c0+1 and S(page,"S.earned")==e0+1, 'a 30 minute session earns 1 coin at 2 per hour'
+    c1=S(page,"S.coins"); page.click('[data-a=lt]'); page.fill('#sheet input[name=mm]','3'); page.click('[data-a=slt]'); assert S(page,"S.coins")==c1, 'under 5 minutes earns nothing'
+    page.click('button[data-a=back]')
+    # ---- calendar
+    page.click('#tvseg label:has-text("Calendar")'); page.wait_for_selector('.cal'); page.screenshot(path='/tmp/shot_cal.png')
+    page.click('.cal-d.today'); assert page.locator('[data-a=cadd]').count()==1
+    page.click('[data-a=cm][data-id="1"]'); page.click('[data-a=cm][data-id="-1"]')
+    tm=S(page,"L.add(L.today(),1)"); page.click(f'.cal-d[data-id="{tm}"]'); assert 'Call mom' in page.inner_text('#app')
+    page.click('[data-a=cadd]'); assert page.input_value('#sheet input[name=due]')==tm; page.click('[data-a=x]')
+    page.click('#tvseg label:has-text("List")')
+    # ---- habits: create, check in, notes, heat
+    tab('habits'); page.click('.fab-btn'); page.fill('#sheet input[name=name]','Read'); page.click('#sheet label:has-text("Daily")'); page.click('[data-a=sh]')
+    page.click('[data-a=ci]'); assert S(page,"S.checkins.length")==1
+    tab('today'); page.click('.habit-strip-name'); page.wait_for_selector('.heat'); page.click('#sheet label.chip:has-text("🙂")'); page.fill('#sheet input[name=hnote]','Chapter 3'); page.click('[data-a=hnote]')
+    c=S(page,"S.checkins[0]"); print('note', c.get('mood'), c.get('note')); assert c['note']=='Chapter 3' and c['mood']=='🙂'
+    page.screenshot(path='/tmp/shot_habit.png'); page.click('[data-a=x]')
+    # ---- rewards: level, freeze, badges, wallet
+    S(page,"(S.coins = 60, null)"); tab('rewards'); assert 'Streak freezes' in page.inner_text('#app')
+    page.click('[data-a=bfz]'); assert S(page,"S.freezes")==1 and S(page,"S.coins")==40
+    page.click('#rseg label:has-text("Badges")'); assert page.locator('.badge').count()>=36 and page.locator('.badge:not(.lock)').count()>=2 and 'earned' in page.inner_text('#app') and '/ ' in page.inner_text('.badge.lock >> nth=0'); page.screenshot(path='/tmp/shot_badges.png')
+    page.click('[data-a=wal]'); txt=page.inner_text('#sheet'); print('wallet:', txt.replace('\n',' | ')[:200]); assert 'Streak freeze' in txt and 'Pay rent' in txt; page.click('[data-a=x]')
+    page.click('#rseg label:has-text("Unlocked")'); assert 'level 3' not in page.inner_text('#app').lower() and 'earned in total' not in page.inner_text('#app').lower(), 'level bar moved off Rewards'
+    tab('today'); lv=page.locator('.lvlcard'); assert lv.count()==1 and 'level' in lv.inner_text().lower() and lv.locator('.bar').count()==1
+    lv.click(); assert 'how levels work' in page.inner_text('#sheet').lower() and '5 × N × (N − 1)' in page.inner_text('#sheet'); page.click('[data-a=x]')
+    # ---- stats
+    tab('settings'); st=page.inner_text('#app').lower(); assert 'level info' in st and 'how you earn coins' in st and 'per hour' in st and 'backup & restore' in st
+    page.fill('#ncat','Fitness'); page.click('[data-a=addcat]'); assert S(page,"S.cats")==['Fitness'] and page.locator('.catchip', has_text='Fitness').count()==1
+    page.fill('#ncat','fitness'); page.click('[data-a=addcat]'); assert S(page,"S.cats")==['Fitness'], 'duplicate ignoring case'
+    page.click('[data-a=delcat][data-id=Fitness]'); assert S(page,"S.cats")==[]; page.fill('#ncat','Fitness'); page.press('#ncat','Enter'); assert S(page,"S.cats")==['Fitness']
+    tab('tasks'); page.click('.fab-btn'); assert page.locator('#sheet select[name=cat] option', has_text='Fitness').count()==1; page.fill('#sheet input[name=title]','Cat task'); page.fill('#sheet input[name=newcat]','Side project'); page.click('[data-a=st]')
+    assert S(page,"S.tasks.find(k=>k.title==='Cat task').cat")=='Side project' and 'Side project' in S(page,"S.cats")
+    tab('habits'); page.click('.fab-btn'); assert page.locator('#sheet label.chip', has_text='Side project').count()==1; page.fill('#sheet input[name=name]','Cat habit'); page.click('#sheet label.chip:has-text("Fitness")'); page.click('#sheet label:has-text("Daily")'); page.click('[data-a=sh]')
+    assert S(page,"S.habits.find(h=>h.name==='Cat habit').cat")=='Fitness'
+    tab('settings'); assert 'still used' not in page.inner_text('#app'); page.click('[data-a=delcat][data-id=Fitness]'); assert 'Fitness' in S(page,"S.cats") and 'still used' in page.inner_text('#toast')
+    S(page,"(S.cats.push('Temp'), null)"); tab('rewards'); tab('settings'); assert page.locator('.catchip', has_text='Temp').count()==1; page.click('[data-a=delcat][data-id=Temp]'); assert 'Temp' not in S(page,"S.cats")
+    page.fill('input[name=sc]','3'); page.press('input[name=sc]','Tab'); assert S(page,"S.settings.coinsPerHour")==3; page.fill('input[name=sc]','2'); page.press('input[name=sc]','Tab')
+    # ---- Google Drive (network simulated)
+    assert page.is_visible('#dcid') and 'connect google drive' in page.inner_text('#app').lower()
+    page.fill('#dcid','x.apps.googleusercontent.com'); page.fill('#dsec','sec'); page.click('[data-a=dconn]'); page.wait_for_selector('#dcode'); assert page.inner_text('#dcode')=='ABCD-EFGH'
+    page.wait_for_function("document.querySelector('#app').innerText.includes('Connected')", timeout=15000); waitG(1)
+    page.wait_for_timeout(400); assert 'never' not in page.inner_text('#app').split('Last backup')[1][:30]
+    k0=S(page,"S.coins"); S(page,"(S.coins=777, null)"); page.click('[data-a=dnow]'); waitG(2)
+    S(page,"(S.coins=5, null)"); page.click('[data-a=drestore]'); page.wait_for_selector('[data-a=drest]'); assert page.locator('[data-a=drest]').count()==2
+    page.click('[data-a=drest] >> nth=0'); page.wait_for_function("window.__ht.S.coins===777", timeout=10000); assert 'Data restored' in page.inner_text('#toast')
+    tab('settings'); page.click('[data-a=ddisc]'); page.wait_for_function("!document.querySelector('#app').innerText.includes('Connected')", timeout=5000); assert page.is_visible('#dcid')
+    page.click('[data-a=tab][data-id=stats]'); page.wait_for_selector('.heat'); page.screenshot(path='/tmp/shot_stats.png', full_page=True)
+    page.click('#mseg label:has-text("Tasks")'); assert 'estimates vs actual' in page.inner_text('#app').lower()
+    page.click('#mseg label:has-text("Weekly review")'); assert 'this week' in page.inner_text('#app'); page.screenshot(path='/tmp/shot_week.png', full_page=True)
+    page.click('[data-a=wk][data-id="-1"]'); assert 'this week' not in page.inner_text('#app'); page.click('[data-a=wk][data-id="1"]')
+    # ---- persistence / reload round trip of new fields
+    page.evaluate("window.__ht.store.flush()"); page.reload(); page.wait_for_selector('#tabs button')
+    assert S(page,"S.tasks.filter(k=>k.rec).length")>=2 and S(page,"S.freezes")==1 and S(page,"S.checkins[0].note")=='Chapter 3'
+    # ---- dark mode screenshot of tasks
+    page.emulate_media(color_scheme='dark'); tab('tasks'); page.screenshot(path='/tmp/shot_dark.png')
+    b.close()
+print('ERRORS:', errs if errs else 'none')

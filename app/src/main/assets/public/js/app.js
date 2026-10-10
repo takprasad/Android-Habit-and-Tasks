@@ -1,6 +1,7 @@
 /* Habit & Task Tracker - UI layer. Markup and class names are intentionally identical to the web version. */
 import * as L from './logic.js';
 import * as store from './storage.js';
+import { createDrive } from './drive.js';
 import * as nat from './native.js';
 
 const { today, add, esc, WD, hm, safeUrl, isOpen, overdue } = L;
@@ -9,6 +10,7 @@ const $ = (s) => document.querySelector(s);
 
 /* ---------- state ---------- */
 let S = L.newState();
+const drive = createDrive({ kv: { get: store.kvGet, set: store.kvSet, remove: store.kvRemove }, postForm: nat.postForm });
 let bootNotice = '';
 let readyRes; const ready = new Promise((r) => { readyRes = r; }); // notification actions wait for the stored data to load
 async function initApp() {
@@ -25,6 +27,7 @@ async function initApp() {
   theme(); L.evaluate(S); store.save(); lastOver = overSig(); render(); sync();
   if (bootNotice) toast(bootNotice);
   readyRes();
+  loadDrive().then(() => { if (tab === 'settings') render(); maybeAutoBackup(); });
   nat.hideSplash();
   if (new URLSearchParams(location.search).has('e2e')) window.__ht = { get S() { return S; }, L, store, back: handleBack };
 }
@@ -149,7 +152,15 @@ function vToday() {
   }
 
   return `<div class="row sp"><h1 style="margin:0">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1><div class="coin-pill">Lv ${L.levelInfo(S).lv} · 🪙 ${S.coins || 0}</div></div>
-  <p class=mu style="margin:4px 0 0">${(() => { const left = d.habits.length - d.doneHabits, due = dueToday.length; return !left && !due ? (d.habits.length || d.doneTasks ? 'All clear for today 🎉' : 'Nothing planned today') : [left ? `${left} habit${left > 1 ? 's' : ''} to go` : '', due ? `${due} task${due > 1 ? 's' : ''} due` : ''].filter(Boolean).join(' · '); })()}</p>
+  ${(() => {
+    const total = d.habits.length + dueToday.length + d.doneTasks, done = d.doneHabits + d.doneTasks, left = d.habits.length - d.doneHabits, due = dueToday.length, pct = total ? done / total : 0;
+    const head = !total ? 'Nothing planned' : pct >= 1 ? 'All clear 🎉' : pct >= 0.5 ? 'Over halfway' : done ? 'Good start' : "Let's get going";
+    const sub = !total ? 'Add a habit or task to begin.' : [left ? `${left} habit${left > 1 ? 's' : ''}` : '', due ? `${due} task${due > 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ') + (left || due ? ' still to do today.' : '');
+    const wkCoins = L.weekReview(S, 0).earned, li = L.levelInfo(S);
+    const lvlCard = `<button class=lvlcard data-a=lvinfo aria-label="Level ${li.lv}, how levels work"><div class="row sp"><b>Level ${li.lv} · ${li.name}</b><span class=mu>${li.b - li.earned} coins to level ${li.lv + 1}</span></div>${bar(li.into, li.span)}</button>`;
+    return `<div class=ringrow><svg width=112 height=112 viewBox="0 0 132 132" role=img aria-label="${done} of ${total} done today"><circle cx=66 cy=66 r=54 fill=none stroke="var(--tr)" stroke-width=12 /><circle cx=66 cy=66 r=54 fill=none stroke="var(--ac)" stroke-width=12 stroke-linecap=round stroke-dasharray="${(339.3 * pct).toFixed(1)} 340" transform="rotate(-90 66 66)" /><text x=66 y=76 text-anchor=middle class=ringtx>${total ? done + '/' + total : '–'}</text></svg><div><div class=ringh>${head}</div><div class=mu style="margin-top:4px">${sub}</div></div></div>
+    ${lvlCard}<div class=tiles><button class=tile data-a=tab data-id=rewards><div class=mu>Coins earned</div><div class="num tv am">${wkCoins}</div><div class=mu>this week</div></button><button class=tile data-a=tab data-id=tasks><div class=mu>Tasks pending</div><div class="num tv">${openTasks.length}</div><div class="mu ${over.length ? 'dg' : ''}">${over.length ? over.length + ' overdue' : 'none overdue'}</div></button></div>`;
+  })()}
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
   <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
   ${d.habits.length ? `<div class="habit-strip">${d.habits.map(habitStripItem).join('')}</div>` : '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
@@ -201,8 +212,8 @@ function vRewards() {
   const seg = view?.seg || 'unlocked', R = S.rewards.filter((r) => r.status === seg);
   const up = S.habits.filter((h) => !h.archived && h.ms.reward).map((h) => ({ n: h.ms.reward, src: h.name, p: h.prog / h.ms.target })).concat(S.tasks.filter((k) => k.ms.mode === 'worklog' && k.ms.reward && k.status !== 'Completed').map((k) => ({ n: k.ms.reward, src: k.title, p: L.toward(k) / L.everySec(k) })));
   const card = (n, s, a, cost) => `<div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px;background:var(--tr)">🪙</div><div class=grow><b>${esc(n)}</b><div class=mu>${esc(s)}${cost ? ` · <span style="white-space:nowrap">🪙 ${cost}</span>` : ''}</div></div>${a}</div>`;
-  const li = L.levelInfo(S), fz = S.freezes || 0;
-  const body = seg === 'badges' ? `<div class=badges>${L.badges(S).map((b) => `<div class="badge ${b.got ? '' : 'lock'}"><div class=bi>${b.icon}</div><b>${esc(b.name)}</b><div class=mu>${esc(b.desc)}</div></div>`).join('')}</div><p class=mu>${L.badges(S).filter((b) => b.got).length} of ${L.badges(S).length} earned</p>`
+  const fz = S.freezes || 0, rate = S.settings.coinsPerHour ?? 2;
+  const body = seg === 'badges' ? (() => { const bs = L.badges(S), got = bs.filter((b) => b.got).length; return `<p class=mu style="margin:0 0 8px">${got} of ${bs.length} earned</p><div class=badges>${bs.slice().sort((a, b) => b.got - a.got).map((b) => `<div class="badge ${b.got ? '' : 'lock'}"><div class=bi>${b.icon}</div><b>${esc(b.name)}</b><div class=mu>${esc(b.desc)}</div>${b.got ? '<div class="bp ok">✓ Earned</div>' : `<div class=bp>${b.cur} / ${b.goal}</div>${bar(b.cur, b.goal)}`}</div>`).join('')}</div>`; })()
     : seg === 'upcoming' ? up.map((u) => card(u.n, u.src, `<span class=am>${Math.round(u.p * 100)}%</span>`)).join('') || '<p class=mu>Set a reward on a habit or task milestone.</p>'
     : R.map((r) => {
       const cost = r.cost || 10, canAfford = (S.coins || 0) >= cost;
@@ -210,9 +221,8 @@ function vRewards() {
       return card(r.name, 'From ' + r.src, btn, cost);
     }).join('') || '<p class=mu>Nothing here yet.</p>';
   return `<div class="row sp"><div><h1 style="margin:0">Rewards</h1><p class=mu style="margin:4px 0 0">Wallet: <b class=am style="font-size:16px">🪙 ${S.coins || 0} Supercoins</b></p></div><button class="btn out sm" data-a=wal>History</button></div>
-  <div class="card lvl" style="margin-top:12px"><div class="row sp"><b>Level ${li.lv} · ${li.name}</b><span class=mu>🪙 ${li.earned} earned in total</span></div>${bar(li.into, li.span)}<div class=mu>${li.b - li.earned} more to reach level ${li.lv + 1}</div></div>
   <div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px;background:var(--tr)">❄</div><div class=grow><b>Streak freezes: ${fz} / ${L.FREEZE_MAX}</b><div class=mu>Used automatically when you miss a period.</div></div><button class="btn out sm" data-a=bfz ${fz >= L.FREEZE_MAX || (S.coins || 0) < L.FREEZE_COST ? 'disabled' : ''}>🪙 ${L.FREEZE_COST}</button></div>
-  <div class=mu style="margin-top:8px;font-size:12px">Task earnings: <span class="pri-High">High: 🪙 5</span> · <span class="pri-Medium">Medium: 🪙 3</span> · <span class="pri-Low">Low: 🪙 2</span></div>
+  <div class=mu style="margin-top:8px;font-size:12px">Task earnings: <span class="pri-High">High: 🪙 5</span> · <span class="pri-Medium">Medium: 🪙 3</span> · <span class="pri-Low">Low: 🪙 2</span> · Logged time: 🪙 ${rate}/hour</div>
   <div class=seg role=radiogroup id=rseg style="margin-top:10px">${['unlocked', 'upcoming', 'claimed', 'badges'].map((s) => `<label><input type=radio name=rs value=${s} ${seg === s ? 'checked' : ''}>${s[0].toUpperCase() + s.slice(1)}</label>`).join('')}</div>
   ${body}`;
 }
@@ -261,7 +271,6 @@ const seg = (n, o, v) => `<div class=seg>${o.map((x) => `<label><input type=radi
 const fld = (l, i) => `<label class=fld><span>${l}</span>${i}</label>`;
 const val = (n) => document.querySelector(`#sheet [name=${n}]:checked`)?.value ?? document.querySelector(`#sheet [name=${n}]`)?.value;
 const chk = (n) => !!document.querySelector(`#sheet [name=${n}]`)?.checked;
-const CATS = ['Health', 'Work', 'Learning', 'Home', 'Personal'];
 const FREQ = { Daily: 'daily', 'X / week': 'weekly', Days: 'days', 'Every N days': 'every', 'N / month': 'monthly' };
 const freqLabel = (t) => Object.keys(FREQ).find((k) => FREQ[k] === t);
 const closeBtn = '<button class=ic data-a=x aria-label=Close>✕</button>';
@@ -270,7 +279,8 @@ function fHabit(h) {
   const e = !!h, type = h ? freqLabel(h.type) : 'X / week', ms = h?.ms || {};
   sheet(`<div class="row sp"><h2 class=num>${e ? 'Edit habit' : 'New habit'}</h2>${closeBtn}</div>
  ${fld('Name', `<input type=text name=name maxlength=60 required value="${esc(h?.name || '')}">`)}
- <div class=lbl>Category</div>${CATS.map((c, i) => `<label class=chip><input type=radio name=cat value=${c} ${(h ? h.cat === c : !i) ? 'checked' : ''}>${c}</label>`).join('')}
+ <div class=lbl>Category</div>${L.allCats(S).map((c, i) => `<label class=chip><input type=radio name=cat value="${esc(c)}" ${(h ? h.cat === c : !i) ? 'checked' : ''}>${esc(c)}</label>`).join('')}
+ <input type=text name=newcat maxlength=24 placeholder="Or create a new category" aria-label="New category" style="margin:4px 0 12px">
  <div class=lbl>Frequency</div>${seg('type', ['Daily', 'X / week', 'Days'], type)}${seg('type', ['Every N days', 'N / month'], type)}
  <div id=fx class="${type === 'X / week' ? '' : 'hide'}">${fld('Days per week (1–7)', `<input type=number name=n min=1 max=7 value="${h?.type === 'weekly' ? h.n : 4}">`)}</div>
  <div id=fd class="${type === 'Days' ? '' : 'hide'}">${WD.map((d, i) => `<label class=chip><input type=checkbox name=day value=${i} ${h?.days.includes(i) ? 'checked' : ''}>${d}</label>`).join('')}</div>
@@ -281,18 +291,25 @@ function fHabit(h) {
  <details class=more style="margin-top:16px" ${e ? 'open' : ''}><summary>Milestone, missed periods &amp; reward</summary>
  <div class=lbl style="margin-top:12px">Milestone</div>${seg('kind', ['Streak', 'Count'], ms.kind === 'streak' ? 'Streak' : 'Count')}
  ${fld('Target', `<input type=number name=target min=1 value="${ms.target || 15}">`)}
- <div class=lbl>If I miss a period</div>${seg('policy', ['Reset', 'Pause', 'Ask'], ms.policy ? ms.policy[0].toUpperCase() + ms.policy.slice(1) : 'Reset')}
+ <div class=lbl>If I miss my goal for a period</div>${seg('policy', ['Reset', 'Pause', 'Ask'], ms.policy ? ms.policy[0].toUpperCase() + ms.policy.slice(1) : 'Reset')}
+ <p class=mu style="margin:-4px 0 12px">Reset: the milestone count goes back to 0, e.g. doing 3 of your 4 days in a week. Pause: keep the count. Ask: you decide.</p>
  ${fld('Reward (optional)', `<input type=text name=reward maxlength=60 value="${esc(ms.reward || '')}">`)}${fld('Reward link (optional, http/https)', `<input type=url name=url value="${esc(ms.url || '')}">`)}
  </details>
  <button class=btn data-a=sh data-id="${h?.id || ''}">${e ? 'Save changes' : 'Save habit'}</button>`);
 }
+/** Category from the form: a typed new name wins over the selection (and is added to the list). null = invalid name. */
+function pickCat() {
+  const nv = val('newcat').trim(); if (!nv) return val('cat') || 'Personal';
+  const c = L.addCat(S, nv); if (!c) toast(`Category names are 1–${L.CAT_MAX} characters, and you can add up to ${L.CUSTOM_MAX}`); return c || null;
+}
 function saveHabit(id) {
   const name = val('name').trim(); if (!name) return toast('Please enter a name');
+  const cat = pickCat(); if (cat === null) return;
   const type = FREQ[val('type')] || 'weekly', days = [...document.querySelectorAll('#sheet [name=day]:checked')].map((i) => +i.value);
   if (type === 'days' && !days.length) return toast('Pick at least one day');
   const url = val('url').trim(); if (url && !safeUrl(url)) return toast('Link must start with http:// or https://');
   const fields = {
-    name, cat: val('cat'), type, days: type === 'days' ? days : [],
+    name, cat, type, days: type === 'days' ? days : [],
     n: type === 'monthly' ? Math.min(31, Math.max(1, +val('nm') || 8)) : Math.min(7, Math.max(1, +val('n') || 4)), every: Math.min(365, Math.max(1, Math.round(+val('ev')) || 2)), multi: chk('multi'),
   };
   const ms = { kind: val('kind').toLowerCase(), target: Math.max(1, Math.round(+val('target')) || 1), policy: val('policy').toLowerCase(), reward: val('reward').trim(), url };
@@ -320,7 +337,7 @@ function fTask(k, preset) {
  ${fld('Title', `<input type=text name=title maxlength=100 value="${esc(k?.title || '')}">`)}<div class=lbl>Priority</div>${seg('pri', ['High', 'Medium', 'Low'], k?.pri || 'Medium')}
  <div class=row>${fld('Due date (optional)', `<input type=date name=due value="${k?.due || preset?.due || ''}">`)}${fld('Time (optional)', `<input type=time name=time value="${k?.time || ''}">`)}</div>
  <div class=chips style="margin:-6px 0 12px">${[['0', 'Today'], ['1', 'Tomorrow'], ['7', 'Next week'], ['x', 'No date']].map(([v, n]) => `<button type=button class=chip data-a=qd data-id=${v}>${n}</button>`).join('')}</div>
- ${fld('Category', `<select name=cat>${CATS.map((c) => `<option ${k?.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>`)}
+ ${fld('Category', `<select name=cat>${L.allCats(S).map((c) => `<option value="${esc(c)}" ${(k ? k.cat === c : c === 'Personal') ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select><input type=text name=newcat maxlength=24 placeholder="Or create a new category" aria-label="New category" style="margin-top:8px">`)}
  <details class=more ${(k && (k.tags?.length || k.est || k.rec || k.bonusCoins || ms.mode === 'worklog' || ms.reward || ms.url)) ? 'open' : ''}><summary>More options · tags, repeat, estimate, rewards</summary>
  ${fld('Tags (comma separated)', `<input type=text name=tags maxlength=120 placeholder="home, errands" value="${esc((k?.tags || []).join(', '))}">`)}
  ${fld('Time estimate in minutes (optional)', `<input type=number name=est min=0 value="${k?.est || ''}">`)}
@@ -352,11 +369,12 @@ function mkTask(f, ms) {
     status: 'Not Started', start: today(), mp: 0, fired: 0, sub: [], ms: ms || { mode: 'once', every: 5, after: 'reset', reward: '', url: '' } };
 }
 function saveTask(id) {
-  const title = val('title').trim(); if (!title) return toast('Please enter a title'); const url = val('url').trim(); if (url && !safeUrl(url)) return toast('Link must start with http:// or https://');
+  const title = val('title').trim(); if (!title) return toast('Please enter a title');
+  const cat = pickCat(); if (cat === null) return; const url = val('url').trim(); if (url && !safeUrl(url)) return toast('Link must start with http:// or https://');
   const wl = val('mode') === 'Every work log', due = val('due') || null, ru = { Days: 'day', Weeks: 'week', Months: 'month' }[val('rep')];
   if (ru && !due) return toast('Repeating tasks need a due date');
   const rec = ru ? { u: ru, n: Math.min(365, Math.max(1, Math.round(+val('rn')) || 1)), days: ru === 'week' ? [...document.querySelectorAll('#sheet [name=rday]:checked')].map((i) => +i.value).sort() : [], dom: ru === 'month' ? +due.slice(8) : 0 } : null;
-  const fields = { title, pri: val('pri'), cat: val('cat'), due, time: due ? val('time') || null : null, bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
+  const fields = { title, pri: val('pri'), cat, due, time: due ? val('time') || null : null, bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
   const ms = { mode: wl ? 'worklog' : 'once', every: Math.max(0.25, +val('every') || 5), after: val('after') === 'Keep adding' ? 'add' : val('after') === 'Carry over' ? 'carry' : 'reset', reward: val('reward').trim(), url };
   const k = id && S.tasks.find((x) => x.id === id);
   if (k) {
@@ -416,29 +434,91 @@ function historySheet(kind, id) {
   <div class=card>${rows.map((e) => `<div class="hist-row row sp"><span>${esc(L.describeAudit(e))}</span><span class=mu style="white-space:nowrap">${new Date(e.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span></div>`).join('') || '<span class=mu>No activity yet.</span>'}</div>
   ${all.length > rows.length ? `<button class="btn out" data-a=hmore data-kind=${kind} data-id=${id}>Show more (${all.length - rows.length})</button>` : ''}`);
 }
+function levelInfoHtml() {
+  const li = L.levelInfo(S), rate = S.settings.coinsPerHour ?? 2, nm = (n) => L.LEVEL_NAMES[Math.min(n - 1, L.LEVEL_NAMES.length - 1)];
+  const rows = Array.from({ length: 10 }, (_, i) => i + 1).map((n) => `<div class="lvrow ${n === li.lv ? 'cur' : ''}"><span>Level ${n}</span><span>${nm(n)}</span><span>${L.levelStart(n)} 🪙</span></div>`).join('');
+  return `<p style="margin-top:0">Your level comes from the <b>total Supercoins you have ever earned</b>. Spending coins on rewards, or losing coins to overdue penalties, never lowers it.</p>
+  <p class=mu>Level N begins at 5 × N × (N − 1) coins earned, so every level takes a little more than the last.</p>
+  <div class=lvt><div class="lvrow hd"><span>Level</span><span>Title</span><span>Starts at</span></div>${rows}<div class=mu style="padding:6px 2px 0">…and onwards.</div></div>
+  <div class=lbl>How you earn coins</div>
+  <ul class=ul><li>Complete a task: High 🪙 5 · Medium 🪙 3 · Low 🪙 2, plus any bonus you set</li><li>Log time on a task (timer or manual): 🪙 ${rate} per hour</li></ul>
+  <p style="margin-bottom:0">You are <b>level ${li.lv} · ${li.name}</b> with 🪙 ${li.earned} earned, ${li.b - li.earned} more for level ${li.lv + 1}.</p>`;
+}
+function driveCard() {
+  const d = driveSt, c = (name, label, on) => `<label class=chip><input type=checkbox name=${name} ${on ? 'checked' : ''}>${label}</label>`;
+  if (!d.connected) return `<p class=mu style="margin-top:0">Back up to a Google Drive folder every week and restore any time. This uses your own free Google credentials, set up once.</p>
+  <details class=more><summary>How to get the Client ID and secret</summary><ol class=ul style="padding-bottom:8px"><li>Open console.cloud.google.com and create a project</li><li>Enable the <b>Google Drive API</b></li><li>Set up the OAuth consent screen (External), add the scope <b>drive.file</b>, then press <b>Publish app</b></li><li>Credentials → Create OAuth client ID → type <b>TVs and Limited Input devices</b></li><li>Paste its Client ID and Client secret below</li></ol><p class=mu>Full steps are in GOOGLE_DRIVE_SETUP.md. The app can only see files it creates itself.</p></details>
+  ${fld('Client ID', `<input type=text id=dcid autocomplete=off autocapitalize=off value="${esc(d.clientId || '')}" placeholder="1234-abc.apps.googleusercontent.com">`)}
+  ${fld('Client secret', `<input type=text id=dsec autocomplete=off autocapitalize=off style="-webkit-text-security:disc" placeholder="${d.hasSecret ? '(saved, leave empty to keep)' : 'GOCSPX-…'}">`)}
+  ${d.lastError ? `<p class="mu dg">${esc(d.lastError)}</p>` : ''}<button class=btn data-a=dconn>Connect Google Drive</button>`;
+  const stale = !d.last || Date.now() - d.last > 8 * 864e5;
+  return `<div class="row sp"><b>✓ Connected</b><span class=mu>Folder “HabitTaskTracker Backups”</span></div>
+  <p class=mu style="margin:6px 0">Last backup: <b class="${stale ? 'am' : ''}">${d.last ? new Date(d.last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'never'}</b></p>${d.lastError ? `<p class="mu dg" style="margin:0 0 6px">Last attempt failed: ${esc(d.lastError)}</p>` : ''}
+  ${c('dauto', 'Back up automatically once a week', d.auto)}<p class=mu style="margin:2px 0 10px">Android has no reliable background timer, so the weekly backup runs the first time you open the app after 7 days.</p>
+  <div class=row style="gap:10px;margin-bottom:10px"><button class=btn data-a=dnow ${driveBusy ? 'disabled' : ''}>${driveBusy ? 'Backing up…' : 'Back up now'}</button><button class="btn out" data-a=drestore>Restore…</button></div>
+  <button class="btn out" data-a=ddisc>Disconnect</button>`;
+}
 function vSettings() {
   const n = S.settings.notif, days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const c = (name, label, on) => `<label class=chip><input type=checkbox name=${name} ${on ? 'checked' : ''}>${label}</label>`;
+  const sec = (title, body) => `<div class="card sec"><div class=sct>${title}</div>${body}</div>`, custom = S.cats || [];
+  const cats = L.allCats(S).map((x) => `<span class=catchip>${esc(x)} <i>${L.catUsage(S, x)}</i>${custom.includes(x) ? `<button data-a=delcat data-id="${esc(x)}" aria-label="Delete category ${esc(x)}">✕</button>` : ''}</span>`).join('');
   return `<h1>Settings</h1>
- <div class=lbl>Analytics</div>
- <button class="btn out" data-a=tab data-id=stats style="margin-bottom:10px">📊 Statistics &amp; weekly review</button>
- <div class=lbl>Theme</div>${seg('theme', ['system', 'light', 'dark'], S.theme)}
- ${fld('Week starts on', `<select name=ws>${[1, 2, 3, 4, 5, 6, 0].map((i) => `<option value=${i} ${S.settings.weekStart === i ? 'selected' : ''}>${days[i]}</option>`).join('')}</select>`)}
- <div class=lbl>Notifications</div>${c('nOn', 'Enable notifications', n.on)}
- <p class=mu>Android asks for permission when you turn this on. Reminders can arrive a few minutes late, so no exact-alarm permission is needed.</p>
+ <button class="btn out" data-a=tab data-id=stats style="margin-bottom:12px">📊 Statistics &amp; weekly review</button>
+ ${sec('Appearance', `<div class=lbl style="margin-top:0">Theme</div>${seg('theme', ['system', 'light', 'dark'], S.theme)}${fld('Week starts on', `<select name=ws>${[1, 2, 3, 4, 5, 6, 0].map((i) => `<option value=${i} ${S.settings.weekStart === i ? 'selected' : ''}>${days[i]}</option>`).join('')}</select>`)}`)}
+ ${sec('Coins for logged time', `${fld('Supercoins per hour logged on tasks', `<input type=number name=sc min=0 max=100 step=0.5 value="${S.settings.coinsPerHour ?? 2}">`)}<p class=mu style="margin:-4px 0 0">Timer and manual sessions both count. Part-hours add up, so 30 minutes at 2 per hour pays 1 coin. Set 0 to turn off.</p>`)}
+ ${sec('Level info', levelInfoHtml())}
+ ${sec('Categories', `<div>${cats}</div><p class=mu style="margin:0 0 8px">The number is how many habits and tasks use it. Only your own, unused categories can be deleted.</p><div class=row style="gap:8px"><input type=text id=ncat maxlength=24 placeholder="New category name" aria-label="New category name"><button class="btn sm" data-a=addcat style="flex:none">Add</button></div>`)}
+ ${sec('Notifications', `${c('nOn', 'Enable notifications', n.on)}<p class=mu>Android asks for permission when you turn this on. Reminders can arrive a few minutes late, so no exact-alarm permission is needed.</p>
  <div id=nopts class="${n.on ? '' : 'hide'}">${c('nDaily', 'Daily reminder', n.daily)}${c('nRisk', 'Habit at risk', n.risk)}${c('nDue', 'Task due soon', n.due)}${c('nTimer', 'Timer running 3h+', n.timer)}${c('nReward', 'Reward unlocked', n.reward)}
- ${fld('Daily reminder time', `<input type=time name=nTime value="${n.dailyTime}">`)}</div>
- <div class=lbl>Your data</div>
- <button class="btn out" data-a=exp style="margin-bottom:10px">Export data (JSON)</button>
- <button class="btn out" data-a=expcsv style="margin-bottom:10px">Export data (CSV)</button>
- <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Import data<input type=file accept=".json,application/json" id=imp hidden></label>
- <button class="btn danger" data-a=wipe>Delete all data</button>`;
+ ${fld('Daily reminder time', `<input type=time name=nTime value="${n.dailyTime}">`)}</div>`)}
+ ${sec('Backup &amp; restore · Google Drive', driveCard())}
+ ${sec('Your data', `<button class="btn out" data-a=exp style="margin-bottom:10px">Export data (JSON)</button><button class="btn out" data-a=expcsv style="margin-bottom:10px">Export data (CSV)</button><label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Import data<input type=file accept=".json,application/json" id=imp hidden></label><button class="btn danger" data-a=wipe>Delete all data</button>`)}`;
 }
+
 let lastBars = null;
 function isDark() { return S.theme === 'dark' || (S.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches); }
 function theme() {
   const r = document.documentElement; S.theme === 'system' ? r.removeAttribute('data-theme') : r.dataset.theme = S.theme;
   const d = isDark(); if (d !== lastBars) { lastBars = d; nat.setBars(d); }
+}
+
+/* ---------- Google Drive backup ---------- */
+let driveSt = { configured: false, connected: false, last: 0, auto: true, lastError: '', clientId: '', hasSecret: false }, driveBusy = false, authRun = null;
+async function loadDrive() { try { driveSt = await drive.status(); } catch { /* keep the previous state */ } }
+const driveErr = (e) => e?.message || 'Something went wrong';
+const fmtDT = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+async function doBackup(manual) {
+  if (driveBusy) return; driveBusy = true; if (tab === 'settings') render(); if (manual) toast('Backing up to Google Drive…');
+  try { const r = await drive.backup(JSON.stringify(S, null, 1)); await loadDrive(); toast('☁ Backup saved: ' + r.name); }
+  catch (e) { await loadDrive(); toast('Backup failed: ' + driveErr(e)); }
+  finally { driveBusy = false; if (tab === 'settings') render(); }
+}
+/** Weekly backup: runs when the app opens / resumes and 7+ days have passed since the last one. */
+async function maybeAutoBackup() {
+  if (driveBusy || !driveSt.connected) return; driveBusy = true;
+  try {
+    const r = await drive.autoBackup(() => JSON.stringify(S, null, 1), () => !S.habits.length && !S.tasks.length);
+    if (r.ran) { await loadDrive(); toast(r.ok ? '☁ Weekly backup saved to Google Drive' : 'Weekly Drive backup failed: ' + r.error); }
+  } catch { /* never disturb the user */ } finally { driveBusy = false; if (tab === 'settings') render(); }
+}
+async function driveConnect() {
+  try { await drive.setCredentials($('#dcid')?.value, $('#dsec')?.value); } catch (e) { return toast(driveErr(e)); }
+  let auth; try { auth = await drive.startAuth(); } catch (e) { await loadDrive(); return toast(driveErr(e)); }
+  const run = authRun = { cancelled: false };
+  sheet(`<div class="row sp"><h2 class=num>Connect Google Drive</h2><button class=ic data-a=dcancel aria-label=Cancel>✕</button></div>
+   <p>1. Open <b>google.com/device</b> on this phone.</p><button class="btn out" data-a=dopen data-id="${esc(auth.url)}">Open google.com/device</button>
+   <p style="margin-top:16px">2. Enter this code and approve access:</p><div class="num code" id=dcode>${esc(auth.userCode)}</div>
+   <p class=mu>Waiting for your approval… keep this screen open.</p><button class="btn out" data-a=dcancel>Cancel</button>`);
+  try { await drive.pollAuth(auth, () => run.cancelled); }
+  catch (e) { if (run.cancelled) return; sheet(); await loadDrive(); render(); return toast('Could not connect: ' + driveErr(e)); }
+  authRun = null; sheet(); await loadDrive(); render(); toast('Google Drive connected'); await doBackup(true);
+}
+async function driveRestoreList() {
+  sheet(`<div class="row sp"><h2 class=num>Restore from Drive</h2>${closeBtn}</div><p class=mu>Loading your backups…</p>`);
+  let ls; try { ls = await drive.list(); } catch (e) { sheet(); return toast('Could not load backups: ' + driveErr(e)); }
+  sheet(`<div class="row sp"><h2 class=num>Restore from Drive</h2>${closeBtn}</div><p class=mu>Newest first. Restoring replaces your current data, and you can undo it right afterwards.</p>
+   ${ls.map((f) => `<div class="card row sp"><div class=grow><b>${esc(fmtDT(f.created))}</b><div class=mu>${Math.max(1, Math.round(f.size / 1024))} KB</div></div><button class="btn sm out" data-a=drest data-id="${esc(f.id)}">Restore</button></div>`).join('') || '<p class=mu>No backups yet. Use “Back up now” first.</p>'}`);
 }
 
 /* ---------- actions ---------- */
@@ -460,14 +540,17 @@ function doCheckin(h) {
 }
 async function exportJson() { await nat.exportFile('tracker-export-' + today() + '.json', 'application/json', JSON.stringify(S, null, 1)); }
 async function exportCsv() { await nat.exportFile('tracker-export-' + today() + '.csv', 'text/csv', L.toCsv(S)); }
+async function applyImport(ns, label) {
+  if (!confirm(`Replace all current data with ${label}? You can undo right afterwards.`)) return;
+  const prev = S; await store.saveBackup(JSON.stringify(prev));
+  S = ns; L.evaluate(S); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); save(); render();
+  toast('Data restored', () => { S = prev; theme(); save(); render(); });
+}
 async function importFile(file) {
   if (!file) return;
   if (file.size > 50e6) return toast('File too large – nothing was changed');
   let ns; try { ns = L.parseImport(await file.text()); } catch { return toast('Invalid file – nothing was changed'); }
-  if (!confirm('Replace all current data with this file?')) return;
-  const prev = S; await store.saveBackup(JSON.stringify(prev));
-  S = ns; L.evaluate(S); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); save(); render();
-  toast('Data imported', () => { S = prev; theme(); save(); render(); });
+  await applyImport(ns, 'this file');
 }
 function openHabitSheet(kind, id) { histLimit = 50; historySheet(kind, id); }
 
@@ -545,8 +628,24 @@ const A = {
   /* habit notes + sharing */
   hnote: ({ h }) => { const lt = L.latestToday(S, h); if (!lt) return; L.setNote(S, lt.id, val('hnote'), val('mood')); save(); habitDetail(h.id); toast('Note saved'); },
   shr: async ({ h }) => { const r = await nat.shareText(h.name, `${h.ms.kind === 'streak' ? '🔥' : '🎯'} ${h.name}: ${h.prog} / ${h.ms.target} ${unit(h)} (best ${h.best}) · tracked with Habit & Task Tracker`); if (r === 'copied') toast('Copied to clipboard'); },
+  /* level info, categories, Google Drive */
+  lvinfo: () => sheet(`<div class="row sp"><h2 class=num>How levels work</h2>${closeBtn}</div>${levelInfoHtml()}`),
+  addcat: () => { const c = L.addCat(S, $('#ncat')?.value); if (!c) return toast(`Enter a name (up to ${L.CAT_MAX} characters, up to ${L.CUSTOM_MAX} categories)`); save(); render(); toast(`Category “${c}” is ready to use`); },
+  delcat: ({ id }) => { const r = L.removeCat(S, id); if (r === 'used') return toast(`“${id}” is still used by ${L.catUsage(S, id)} item(s)`); if (r === 'ok') { save(); render(); } },
+  dconn: () => driveConnect(),
+  dcancel: () => { if (authRun) authRun.cancelled = true; authRun = null; sheet(); },
+  dopen: ({ b }) => { const u = b.dataset.id; if (u.startsWith('https://')) nat.openLink(u); },
+  dnow: () => doBackup(true),
+  drestore: () => driveRestoreList(),
+  drest: async ({ id }) => {
+    sheet(); toast('Downloading backup…'); let text;
+    try { text = await drive.download(id); } catch (e) { return toast('Could not download: ' + driveErr(e)); }
+    let ns; try { ns = L.parseImport(text); } catch { return toast('That backup could not be read – nothing was changed'); }
+    await applyImport(ns, 'this Drive backup');
+  },
+  ddisc: async () => { if (!confirm('Disconnect Google Drive? Your existing backups stay in Drive.')) return; await drive.disconnect(); await loadDrive(); render(); toast('Disconnected'); },
   exp: exportJson, expcsv: exportCsv,
-  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); S = L.newState(); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
+  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); await drive.forget(); await loadDrive(); S = L.newState(); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
 };
 document.addEventListener('click', (e) => {
   if (e.target.id === 'sheet') return sheet();
@@ -562,6 +661,8 @@ document.addEventListener('change', async (e) => {
   if (n === 'rep') { $('#rp').classList.toggle('hide', t.value === 'None'); $('#rw').classList.toggle('hide', t.value !== 'Weeks'); }
   if (n === 'mode') $('#wl').classList.toggle('hide', t.value === 'Once on completion');
   if (n === 'theme') { S.theme = t.value; theme(); save(); }
+  if (n === 'sc') { const v = Math.max(0, Math.min(100, Math.round((+t.value || 0) * 2) / 2)); S.settings.coinsPerHour = v; save(); toast(v ? `🪙 ${v} per hour of logged time` : 'Coins for logged time turned off'); }
+  if (n === 'dauto') { drive.setAuto(t.checked).then(loadDrive).then(() => toast(t.checked ? 'Weekly backup on' : 'Weekly backup off')); }
   if (n === 'ws') { L.evaluate(S); S.settings.weekStart = +t.value; for (const h of S.habits) if (!h.archived && (h.type === 'weekly' || h.type === 'days')) h.evalFrom = L.period(S, h, today())[0]; save(); render(); }
   const N = { nDaily: 'daily', nRisk: 'risk', nDue: 'due', nTimer: 'timer', nReward: 'reward' };
   if (n === 'nOn') {
@@ -575,6 +676,7 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') sheet();
   if (e.key === 'Enter' && e.target.id === 'qa') { e.preventDefault(); A.qa(); }
+  if (e.key === 'Enter' && e.target.id === 'ncat') { e.preventDefault(); A.addcat(); }
   if (e.key === 'Enter' && e.target.id === 'sn') { e.preventDefault(); document.querySelector('[data-a=sadd]')?.click(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role=button][data-a]')) { e.preventDefault(); e.target.click(); }
 });
@@ -602,7 +704,7 @@ const overSig = () => S.tasks.filter(overdue).map((k) => k.id).join();
 function refresh() {
   if (L.evaluate(S)) store.save();
   lastKey = today() + '|' + L.tzKey(); lastOver = overSig();
-  if (tab !== 'task') render(); sync();
+  if (tab !== 'task') render(); sync(); maybeAutoBackup();
 }
 nat.onAppState((active) => { if (active) refresh(); else store.flush(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) store.flush(); else refresh(); });

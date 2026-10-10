@@ -38,9 +38,11 @@ export const isOpen = (k) => !CLOSED.includes(k.status);
 /* ---------- state ---------- */
 export const defaultSettings = () => ({
   weekStart: 1,
+  coinsPerHour: 2, // Supercoins earned per hour of logged task time (timer or manual); fractions carry over in S.coinFrac
   notif: { on: false, daily: true, dailyTime: '20:00', risk: true, due: true, timer: true, reward: true },
 });
-export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [] });
+export const DEFAULT_CATS = ['Health', 'Work', 'Learning', 'Home', 'Personal'];
+export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [], cats: [], coinFrac: 0 });
 export const log = (S, type, id, p) => { S.audit.push({ type, id, p, at: clock.now().getTime() }); };
 
 /* ---------- habit engine ---------- */
@@ -210,6 +212,12 @@ export function addSession(S, k, dur, type, note, start) {
   const now = clock.now().getTime();
   S.sessions.push({ id: uid(), t: k.id, start: start || now - dur * 1000, dur, type, note });
   log(S, type === 'timer' ? 'timer_stopped' : 'session_added', k.id, { dur });
+  const rate = S.settings.coinsPerHour ?? 2;
+  if (rate > 0 && dur > 0) { // coins = hours logged x rate; the leftover fraction is carried so many short sessions still add up
+    const tot = (S.coinFrac || 0) + dur / 3600 * rate, c = Math.floor(tot + 1e-6);
+    S.coinFrac = Math.max(0, tot - c);
+    if (c > 0) { S.coins = (S.coins || 0) + c; S.earned = (S.earned || 0) + c; log(S, 'session_coins', k.id, { earned: c, coins: S.coins, dur }); hooks.notice(`+🪙 ${c} for your logged time`); }
+  }
   if (k.status === 'Not Started') k.status = 'In Progress';
   k.last = now;
   if (k.ms.mode === 'worklog') {
@@ -231,6 +239,24 @@ export function complete(S, k) {
   const nx = spawnNext(S, k), tail = nx ? ` Next one is due ${nx.due}.` : '';
   if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, `🎉 Milestone reached! Earned 🪙 ${earned} Supercoins!${tail}`); }
   else { hooks.celebrate(`🎉 Task completed! Earned 🪙 ${earned} Supercoins.${tail}`); }
+}
+
+/* ---------- categories ---------- */
+export const CAT_MAX = 24, CUSTOM_MAX = 20;
+/** Built-in + user-made + any category still used by an existing habit or task. */
+export const allCats = (S) => [...new Set([...DEFAULT_CATS, ...(S.cats || []), ...S.habits.map((h) => h.cat), ...S.tasks.map((k) => k.cat)].filter(Boolean))];
+export const catUsage = (S, name) => S.habits.filter((h) => h.cat === name).length + S.tasks.filter((k) => k.cat === name).length;
+/** Returns the canonical category name (existing one if the same ignoring case) or '' when invalid / limit reached. */
+export function addCat(S, raw) {
+  const name = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, CAT_MAX); if (!name) return '';
+  const hit = allCats(S).find((c) => c.toLowerCase() === name.toLowerCase()); if (hit) return hit;
+  if ((S.cats || []).length >= CUSTOM_MAX) return '';
+  (S.cats ||= []).push(name); return name;
+}
+/** 'ok' | 'default' (built-in) | 'used' (still assigned to items) | 'missing' */
+export function removeCat(S, name) {
+  if (DEFAULT_CATS.includes(name)) return 'default'; if (!(S.cats || []).includes(name)) return 'missing';
+  if (catUsage(S, name)) return 'used'; S.cats = S.cats.filter((c) => c !== name); return 'ok';
 }
 
 /* ---------- recurring tasks ---------- */
@@ -292,17 +318,28 @@ export function levelInfo(S) {
   const earned = S.earned || 0, lv = levelOf(earned), a = levelStart(lv), b = levelStart(lv + 1);
   return { lv, name: LEVEL_NAMES[Math.min(lv - 1, LEVEL_NAMES.length - 1)], earned, a, b, into: earned - a, span: b - a };
 }
+/** Every badge has a counter: cur / goal. Locked ones show their progress in the UI. */
 export function badges(S) {
   const doneT = S.tasks.filter((k) => k.status === 'Completed').length, ck = S.checkins.length, best = Math.max(0, ...S.habits.map((h) => h.best));
-  const ms = S.habits.reduce((a, h) => a + h.completed, 0), sec = S.sessions.reduce((a, s) => a + s.dur, 0), claimed = S.rewards.filter((r) => r.status === 'claimed').length;
-  const B = (id, icon, name, desc, got) => ({ id, icon, name, desc, got: !!got });
+  const ms = S.habits.reduce((a, h) => a + h.completed, 0), hrs = S.sessions.reduce((a, s) => a + s.dur, 0) / 3600, claimed = S.rewards.filter((r) => r.status === 'claimed').length, lv = levelOf(S.earned);
+  const recDone = S.tasks.filter((k) => k.rec && k.status === 'Completed').length, steps = S.tasks.reduce((a, k) => a + (k.sub || []).filter((x) => x.d).length, 0);
+  const notes = S.checkins.filter((c) => c.note || c.mood).length, early = S.checkins.filter((c) => !c.bd && new Date(c.at).getHours() < 8).length, night = S.checkins.filter((c) => !c.bd && new Date(c.at).getHours() >= 21).length;
+  const tagged = S.tasks.filter((k) => (k.tags || []).length).length, frz = S.audit.filter((e) => e.type === 'freeze_used').length, wk = Math.max(0, ...S.habits.map((h) => h.completed));
+  const B = (id, icon, name, desc, cur, goal) => ({ id, icon, name, desc, cur: Math.min(+cur.toFixed(1), goal), goal, got: cur >= goal });
   return [
-    B('t1', '✅', 'First step', 'Complete a task', doneT >= 1), B('t10', '🔟', 'Ten down', 'Complete 10 tasks', doneT >= 10), B('t50', '🏆', 'Task master', 'Complete 50 tasks', doneT >= 50),
-    B('c1', '🌱', 'Habit seed', 'Check in once', ck >= 1), B('c100', '💯', 'Century', 'Record 100 check-ins', ck >= 100),
-    B('s7', '🔥', 'Week streak', 'Reach a progress of 7 on a habit', best >= 7), B('s30', '🌋', 'Month streak', 'Reach a progress of 30 on a habit', best >= 30),
-    B('m1', '🎯', 'Milestone', 'Complete a habit milestone', ms >= 1), B('h10', '⏱️', 'Deep work', 'Log 10 hours on tasks', sec >= 36000),
-    B('r3', '🎁', 'Treat yourself', 'Claim 3 rewards', claimed >= 3), B('l5', '⭐', 'Level 5', 'Reach level 5', levelOf(S.earned) >= 5),
-    B('rec', '🔁', 'On repeat', 'Complete a recurring task', S.tasks.some((k) => k.rec && k.status === 'Completed')),
+    B('t1', '✅', 'First step', 'Complete a task', doneT, 1), B('t10', '🔟', 'Ten down', 'Complete 10 tasks', doneT, 10), B('t25', '📋', 'On a roll', 'Complete 25 tasks', doneT, 25),
+    B('t50', '🏆', 'Task master', 'Complete 50 tasks', doneT, 50), B('t100', '💎', 'Centurion', 'Complete 100 tasks', doneT, 100),
+    B('c1', '🌱', 'Habit seed', 'Check in once', ck, 1), B('c25', '🌿', 'Habit builder', 'Record 25 check-ins', ck, 25), B('c100', '💯', 'Century', 'Record 100 check-ins', ck, 100), B('c500', '🌳', 'Unstoppable', 'Record 500 check-ins', ck, 500),
+    B('s7', '🔥', 'Week streak', 'Reach a progress of 7 on a habit', best, 7), B('s14', '⚡', 'Fortnight', 'Reach a progress of 14 on a habit', best, 14), B('s30', '🌋', 'Month streak', 'Reach a progress of 30 on a habit', best, 30),
+    B('s60', '🚀', 'Two months', 'Reach a progress of 60 on a habit', best, 60), B('s100', '👑', 'Hundred days', 'Reach a progress of 100 on a habit', best, 100),
+    B('m1', '🎯', 'Milestone', 'Complete a habit milestone', ms, 1), B('m5', '🏅', 'Milestone hunter', 'Complete 5 habit milestones', ms, 5),
+    B('h1', '⏳', 'First hour', 'Log 1 hour on tasks', hrs, 1), B('h10', '⏱️', 'Deep work', 'Log 10 hours on tasks', hrs, 10), B('h50', '🧠', 'Marathon', 'Log 50 hours on tasks', hrs, 50), B('h100', '🕰️', 'Time lord', 'Log 100 hours on tasks', hrs, 100),
+    B('r1', '🎀', 'First treat', 'Claim a reward', claimed, 1), B('r3', '🎁', 'Treat yourself', 'Claim 3 rewards', claimed, 3), B('r10', '🛍️', 'Reward collector', 'Claim 10 rewards', claimed, 10),
+    B('l3', '🥉', 'Level 3', 'Reach level 3', lv, 3), B('l5', '⭐', 'Level 5', 'Reach level 5', lv, 5), B('l10', '🌟', 'Level 10', 'Reach level 10', lv, 10),
+    B('rec', '🔁', 'On repeat', 'Complete a recurring task', recDone, 1), B('rec10', '📆', 'Routine builder', 'Complete 10 recurring tasks', recDone, 10), B('stp', '🪜', 'Step by step', 'Finish 25 task steps', steps, 25),
+    B('nts', '📝', 'Reflective', 'Add 10 check-in notes or moods', notes, 10), B('erl', '🌅', 'Early bird', 'Check in before 8am, 10 times', early, 10), B('nit', '🌙', 'Night owl', 'Check in after 9pm, 10 times', night, 10),
+    B('frz', '❄️', 'Safety net', 'Have a streak freeze save a habit', frz, 1), B('tag', '🏷️', 'Labeler', 'Tag 10 tasks', tagged, 10), B('cat', '🗂️', 'Organizer', 'Create your own category', (S.cats || []).length, 1),
+    B('sav', '🏦', 'Saver', 'Hold 100 Supercoins at once', S.coins || 0, 100), B('mlt', '🎖️', 'Two goals', 'Complete 2 milestones on one habit', wk, 2),
   ];
 }
 export const FREEZE_COST = 20, FREEZE_MAX = 3;
@@ -318,6 +355,7 @@ export function ledger(S) {
   const tn = new Map(S.tasks.map((k) => [k.id, k.title])), rn = new Map(S.rewards.map((r) => [r.id, r.name])), out = [];
   for (const e of S.audit) {
     if (e.type === 'coins_earned') out.push({ at: e.at, d: +(e.p?.earned || 0), label: tn.get(e.id) ?? 'Completed task', bal: e.p?.coins });
+    else if (e.type === 'session_coins') out.push({ at: e.at, d: +(e.p?.earned || 0), label: 'Logged time: ' + (tn.get(e.id) ?? 'task'), bal: e.p?.coins });
     else if (e.type === 'coin_penalty') out.push({ at: e.at, d: -(e.p?.penalty || 0), label: 'Overdue: ' + (tn.get(e.id) ?? 'task'), bal: e.p?.coins });
     else if (e.type === 'reward_claimed' && e.p?.cost) out.push({ at: e.at, d: -e.p.cost, label: 'Claimed ' + (rn.get(e.id) ?? 'reward'), bal: e.p.coins });
     else if (e.type === 'freeze_bought') out.push({ at: e.at, d: -(e.p?.cost || 0), label: '❄ Streak freeze', bal: e.p?.coins });
@@ -333,7 +371,7 @@ export function weekReview(S, off = 0) {
   return {
     a, b, days, best: top, checkins: ck.length, tasksDone: doneT.length, met: ev.filter((e) => e.ok).length, missed: ev.filter((e) => !e.ok).length,
     sec: S.sessions.filter((s) => inR(dayOf(s.start))).reduce((x, s) => x + s.dur, 0),
-    earned: au.filter((e) => e.type === 'coins_earned').reduce((x, e) => x + (e.p?.earned || 0), 0), penalty: au.filter((e) => e.type === 'coin_penalty').reduce((x, e) => x + (e.p?.penalty || 0), 0),
+    earned: au.filter((e) => e.type === 'coins_earned' || e.type === 'session_coins').reduce((x, e) => x + (e.p?.earned || 0), 0), penalty: au.filter((e) => e.type === 'coin_penalty').reduce((x, e) => x + (e.p?.penalty || 0), 0),
   };
 }
 /** Map date -> count of check-ins (one habit) or check-ins + completed tasks (all). */
@@ -480,7 +518,7 @@ const AUDIT = {
   timer_started: () => 'Timer started', timer_paused: () => 'Timer paused', timer_resumed: () => 'Timer resumed',
   timer_stopped: (p) => `Timer stopped, ${hm(p?.dur || 0)} logged`, session_added: (p) => `Logged ${hm(p?.dur || 0)} manually`,
   coin_penalty: (p) => `Penalty: -${p?.days || 1} coin(s) for overdue delay`,
-  task_recurred: (p) => `Next occurrence created, due ${p?.due}`, freeze_bought: () => 'Streak freeze bought', freeze_used: (p) => `Streak freeze used for the period from ${p?.a}`,
+  session_coins: (p) => `Logged time earned ${p?.earned} coin(s)`, task_recurred: (p) => `Next occurrence created, due ${p?.due}`, freeze_bought: () => 'Streak freeze bought', freeze_used: (p) => `Streak freeze used for the period from ${p?.a}`,
 };
 export const describeAudit = (e) => (AUDIT[e.type] ? AUDIT[e.type](e.p) : e.type.replace(/_/g, ' '));
 export const auditFor = (S, id) => S.audit.filter((e) => e.id === id).sort((a, b) => b.at - a.at);
@@ -505,8 +543,10 @@ export function migrate(raw) {
   S.coins = opt(raw.coins, 0, (v) => num(v, 'coins', 0));
   S.theme = oneOf(raw.theme ?? 'system', ['system', 'light', 'dark'], 'theme');
   S.freezes = opt(raw.freezes, 0, (v) => num(v, 'freezes', 0, 99));
+  S.coinFrac = opt(raw.coinFrac, 0, (v) => num(v, 'coinFrac', 0, 1));
+  S.cats = opt(raw.cats, [], (v) => [...new Set(arr(v, 'cats').slice(0, 30).map((x) => str(x, 'category', 40).trim()).filter(Boolean))]);
   const st = raw.settings || {}, ds = defaultSettings();
-  S.settings = { weekStart: opt(st.weekStart, 1, (v) => num(v, 'weekStart', 0, 6)), notif: { ...ds.notif } };
+  S.settings = { weekStart: opt(st.weekStart, 1, (v) => num(v, 'weekStart', 0, 6)), coinsPerHour: opt(st.coinsPerHour, 2, (v) => num(v, 'coinsPerHour', 0, 100)), notif: { ...ds.notif } };
   for (const k of Object.keys(ds.notif)) {
     if (st.notif && k in st.notif) {
       const v = st.notif[k];
@@ -552,7 +592,7 @@ export function migrate(raw) {
   S.sessions = opt(raw.sessions, [], (v) => arr(v, 'sessions').map((s) => ({ id: id(s.id, 'session'), t: id(s.t, 'session task'), start: num(s.start, 'start'), dur: num(s.dur, 'dur', 0), type: oneOf(s.type, ['timer', 'manual'], 'session type'), note: optStr(s.note, 'note', 1000) })));
   S.rewards = opt(raw.rewards, [], (v) => arr(v, 'rewards').map((r) => ({ id: id(r.id, 'reward'), name: str(r.name, 'reward name', 200), url: optStr(r.url, 'url'), src: optStr(r.src, 'src', 500), cost: opt(r.cost, 10, (x) => num(x, 'cost', 0)), status: oneOf(r.status, ['unlocked', 'claimed'], 'reward status'), at: num(r.at, 'at'), ...(r.claimedAt != null ? { claimedAt: num(r.claimedAt, 'claimedAt') } : {}) })));
   S.audit = opt(raw.audit, [], (v) => arr(v, 'audit').map((e) => ({ type: str(e.type, 'audit type', 64), id: typeof e.id === 'string' ? e.id : '', p: e.p && typeof e.p === 'object' ? e.p : undefined, at: num(e.at, 'audit at') })));
-  S.earned = opt(raw.earned, S.audit.filter((e) => e.type === 'coins_earned').reduce((a, e) => a + (+e.p?.earned || 0), 0), (v) => num(v, 'earned', 0));
+  S.earned = opt(raw.earned, S.audit.filter((e) => e.type === 'coins_earned' || e.type === 'session_coins').reduce((a, e) => a + (+e.p?.earned || 0), 0), (v) => num(v, 'earned', 0));
   S.snz = opt(raw.snz, [], (v) => arr(v, 'snz').slice(0, 20).map((x) => ({ id: num(x.id, 'snz id', 0, 2147483647), title: str(x.title, 'snz title', 200), body: optStr(x.body, 'snz body', 500), at: num(x.at, 'snz at'), kind: optStr(x.kind, 'snz kind', 20), ref: typeof x.ref === 'string' && ID.test(x.ref) ? x.ref : '' })));
   const t = raw.timer;
   S.timer = t && tid.has(t.id) ? { id: t.id, run: !!t.run, at: num(t.at, 'timer at'), acc: num(t.acc, 'timer acc', 0), ...(t.pomo ? { pomo: num(t.pomo, 'pomo', 1, 180) } : {}) } : null;

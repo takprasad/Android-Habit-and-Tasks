@@ -11,6 +11,7 @@ const plug = (n) => {
 };
 const App = plug('App'), Browser = plug('Browser'), StatusBar = plug('StatusBar'), SystemBars = plug('SystemBars'), Splash = plug('SplashScreen');
 const LN = plug('LocalNotifications'), Share = plug('Share'), FS = plug('Filesystem');
+const Http = isNative ? (cap.Plugins?.CapacitorHttp || plug('CapacitorHttp')) : null;
 const safe = async (f) => { try { return await f(); } catch (e) { console.warn('[native]', e?.message || e); return undefined; } };
 
 export async function onBack(handler) { if (App) await App.addListener('backButton', () => { if (!handler()) App.exitApp(); }); }
@@ -37,6 +38,16 @@ export async function exportFile(name, mime, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+/** POST a form -> { status, json }. Uses Android's native HTTP stack (no browser CORS rules); plain fetch on the web. */
+export async function postForm(url, body) {
+  const asJson = (d) => { if (typeof d === 'string') { try { return JSON.parse(d); } catch { return {}; } } return d || {}; };
+  if (Http) {
+    try { const r = await Http.post({ url, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, data: body }); return { status: r.status, json: asJson(r.data) }; }
+    catch (e) { if (typeof e?.status === 'number') return { status: e.status, json: asJson(e.data) }; throw e; }
+  }
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
+  let json = {}; try { json = await r.json(); } catch { /* not json */ } return { status: r.status, json };
+}
 /** Share plain text: share sheet on Android, Web Share / clipboard in a browser. */
 export async function shareText(title, text) {
   if (Share) return safe(() => Share.share({ title, text, dialogTitle: title }));

@@ -127,3 +127,27 @@ details.more>summary::after{content:'▾';margin-left:auto;transition:transform 
 details.more[open]>summary::after{transform:rotate(180deg)}
 details.more[open]{padding-bottom:6px}
 .card.click:active,.habit-strip-name:active{opacity:.7}
+
+/* ---- v3 dashboard ---- */
+.ringrow{display:flex;align-items:center;gap:16px;margin:14px 0 12px}
+.ringtx{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:30px;fill:var(--tx)}
+.ringh{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:21px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.tile{background:var(--sf);border:1px solid var(--bd);border-radius:20px;padding:14px 16px;text-align:left;cursor:pointer;color:var(--tx)}
+.tile:active{opacity:.75}.tile .tv{font-size:34px;line-height:1.15}
+
+/* ---- v5: level card, settings cards, categories, badges ---- */
+.lvlcard{display:block;width:100%;text-align:left;background:var(--sf);border:1px solid var(--bd);border-radius:20px;padding:12px 16px;margin-bottom:12px;color:var(--tx);cursor:pointer}
+.lvlcard .bar i{background:var(--ac)}.lvlcard:active{opacity:.75}
+.card.sec{padding:16px;margin-bottom:14px}.sct{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:18px;margin-bottom:10px}
+.catchip{display:inline-flex;align-items:center;gap:6px;background:var(--tr);border-radius:99px;padding:2px 4px 2px 12px;margin:0 6px 8px 0;font-size:14px}
+.catchip i{font-style:normal;color:var(--mu);font-size:12px}.catchip:not(:has(button)){padding-right:12px}
+.catchip button{border:0;background:none;color:var(--mu);font-size:14px;min-width:30px;min-height:30px;cursor:pointer}
+.lvt{border:1px solid var(--bd);border-radius:14px;padding:6px 10px;margin-bottom:6px}
+.lvrow{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px;padding:6px 4px;font-size:14px;border-radius:8px}.lvrow.hd{color:var(--mu);font-size:12px;font-weight:700;text-transform:uppercase}
+.lvrow.cur{background:var(--tr);font-weight:700;color:var(--ac)}
+ul.ul,ol.ul{margin:6px 0 10px;padding-left:20px;line-height:1.5;font-size:14px}
+.code{font-size:36px;letter-spacing:.14em;text-align:center;margin:12px 0;color:var(--ac)}
+.badge .bp{font-size:12px;font-weight:700;margin-top:6px;color:var(--mu)}.badge .bp.ok{color:var(--ac)}
+.badge .bar{margin-top:4px}
+.coin-pill{white-space:nowrap;flex:none}.row.sp>h1{font-size:clamp(24px,7.4vw,34px);min-width:0;margin-right:8px}
