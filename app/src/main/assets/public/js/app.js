@@ -73,7 +73,7 @@ function restore(snap) {
 const fmtHour = (h) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
 const fmtDay = (d) => L.P(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 const tagsOf = (v) => [...new Set(String(v || '').split(/[\s,]+/).map((x) => x.replace(/^#/, '').toLowerCase()).filter((x) => /^[\p{L}\p{N}_-]{1,20}$/u.test(x)))].slice(0, 8);
-const run = (k) => S.timer && S.timer.id === k.id;
+const run = (k) => !!S.timers[k.id];
 const el = (k) => L.elapsed(S, k);
 
 function heat(counts, weeks = 12) {
@@ -101,6 +101,8 @@ function habitStripItem(h) {
     ${h.prog > 0 ? `<div class=streak>${h.ms.kind === 'streak' ? '🔥' : '🎯'} ${h.prog}</div>` : ''}
   </div>`;
 }
+/** Level + coins, shown at the top right of every page. Tap for how levels work. */
+const hud = () => { const li = L.levelInfo(S); return `<button class="coin-pill hud" data-a=lvinfo aria-label="Level ${li.lv}, ${S.coins || 0} coins. How levels work">Lv ${li.lv} · 🪙 ${S.coins || 0}</button>`; };
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
   const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
@@ -149,44 +151,37 @@ function vToday() {
     }
   }
 
-  return `<div class="row sp"><h1 style="margin:0">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1><div class="coin-pill">Lv ${L.levelInfo(S).lv} · 🪙 ${S.coins || 0}</div></div>
-  ${(() => {
-    const total = d.habits.length + dueToday.length + d.doneTasks, done = d.doneHabits + d.doneTasks, left = d.habits.length - d.doneHabits, due = dueToday.length, pct = total ? done / total : 0;
-    const head = !total ? 'Nothing planned' : pct >= 1 ? 'All clear 🎉' : pct >= 0.5 ? 'Over halfway' : done ? 'Good start' : "Let's get going";
-    const sub = !total ? 'Add a habit or task to begin.' : [left ? `${left} habit${left > 1 ? 's' : ''}` : '', due ? `${due} task${due > 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ') + (left || due ? ' still to do today.' : '');
-    const wkCoins = L.weekReview(S, 0).earned, li = L.levelInfo(S);
-    const lvlCard = `<button class=lvlcard data-a=lvinfo aria-label="Level ${li.lv}, how levels work"><div class="row sp"><b>Level ${li.lv} · ${li.name}</b><span class=mu>${li.b - li.earned} coins to level ${li.lv + 1}</span></div>${bar(li.into, li.span)}</button>`;
-    return `<div class=ringrow><svg width=112 height=112 viewBox="0 0 132 132" role=img aria-label="${done} of ${total} done today"><circle cx=66 cy=66 r=54 fill=none stroke="var(--tr)" stroke-width=12 /><circle cx=66 cy=66 r=54 fill=none stroke="var(--ac)" stroke-width=12 stroke-linecap=round stroke-dasharray="${(339.3 * pct).toFixed(1)} 340" transform="rotate(-90 66 66)" /><text x=66 y=76 text-anchor=middle class=ringtx>${total ? done + '/' + total : '–'}</text></svg><div><div class=ringh>${head}</div><div class=mu style="margin-top:4px">${sub}</div></div></div>
-    ${lvlCard}<div class=tiles><button class=tile data-a=tab data-id=rewards><div class=mu>Coins earned</div><div class="num tv am">${wkCoins}</div><div class=mu>this week</div></button><button class=tile data-a=tab data-id=tasks><div class=mu>Tasks pending</div><div class="num tv">${openTasks.length}</div><div class="mu ${over.length ? 'dg' : ''}">${over.length ? over.length + ' overdue' : 'none overdue'}</div></button></div>`;
-  })()}
+  const wkCoins = L.weekReview(S, 0).earned, li = L.levelInfo(S);
+  const lvlCard = `<button class=lvlcard data-a=lvinfo aria-label="Level ${li.lv}, how levels work"><div class="row sp"><b>Level ${li.lv} · ${li.name}</b><span class=mu>${li.b - li.earned} coins to level ${li.lv + 1}</span></div>${bar(li.into, li.span)}</button>`;
+  return `<div class="row sp ph"><h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1>${hud()}</div>
+  ${lvlCard}<div class=tiles><button class=tile data-a=tab data-id=rewards><div class=mu>Coins earned</div><div class="num tv am">${wkCoins}</div><div class=mu>this week</div></button><button class=tile data-a=tab data-id=tasks><div class=mu>Tasks pending</div><div class="num tv">${openTasks.length}</div><div class="mu ${over.length ? 'dg' : ''}">${over.length ? over.length + ' overdue' : 'none overdue'}</div></button></div>
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
-  <div class=lbl>Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
+  <div class=lbl style="margin-top:6px">Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
   ${d.habits.length ? `<div class="habit-strip">${d.habits.map(habitStripItem).join('')}</div>` : '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
-  <div class=lbl>Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
-  <div class=card><div class="task-list-scroll">${tasksContent}</div>
-  ${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
+  <div class=lbl style="margin-top:6px">Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
+  <div class="card scrollbox">${tasksContent}${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
 }
 function vHabits() {
   const l = S.habits.filter((h) => !h.archived && h.name.toLowerCase().includes(q.toLowerCase())), ar = S.habits.filter((h) => h.archived);
-  return `<h1>Habits</h1>
-  <input type=text id=q placeholder="Search habits" value="${esc(q)}" aria-label="Search habits">
-  <div class=lbl></div>${l.map((h) => habitCard(h, 'eh')).join('') || '<div class=empty><div class=ei>🌱</div>No habits yet.<br>Tap + to plant your first one.</div>'}
-  ${ar.length ? `<div class=lbl>Archived</div>${ar.map((h) => `<div class="card row sp"><span>${esc(h.name)}</span><button class="btn sm out" data-a=unarch data-id=${h.id}>Restore</button></div>`).join('')}` : ''}`;
+  return `<div class="row sp ph"><h1>Habits</h1>${hud()}</div>
+  <input type=text id=q placeholder="Search habits" value="${esc(q)}" aria-label="Search habits" style="margin-bottom:12px">
+  <div class="scrollbox fabpad">${l.map((h) => habitCard(h, 'eh')).join('') || '<div class=empty><div class=ei>🌱</div>No habits yet.<br>Tap + to plant your first one.</div>'}
+  ${ar.length ? `<div class=lbl>Archived</div>${ar.map((h) => `<div class="card row sp"><span>${esc(h.name)}</span><button class="btn sm out" data-a=unarch data-id=${h.id}>Restore</button></div>`).join('')}` : ''}</div>`;
 }
 function vTasks() {
   const quick = `<div class=row style="margin-bottom:10px;gap:8px"><input type=text id=qa maxlength=160 value="${esc(qaVal)}" placeholder='Quick add: Call mom tomorrow' aria-label="Quick add task"><button class="btn sm" data-a=qa style="flex:none">Add</button></div>`;
   const tv = `<div class="seg slim" id=tvseg>${[['list', 'List'], ['cal', 'Calendar']].map(([v, n]) => `<label><input type=radio name=tv value=${v} ${tview === v ? 'checked' : ''}>${n}</label>`).join('')}</div>`;
-  if (tview === 'cal') return `<h1>Tasks</h1>${quick}${tv}${vCal()}`;
+  if (tview === 'cal') return `<div class="row sp ph"><h1>Tasks</h1>${hud()}</div>${quick}${tv}<div class="scrollbox fabpad">${vCal()}</div>`;
   const tags = L.allTags(S); if (tagF && !tags.includes(tagF)) tagF = '';
   const l = L.filterTasks(S, q, fil, tagF, sortBy);
   const chips = [['open', 'Open'], ['over', 'Overdue'], ['done', 'Done'], ['all', 'All']].map(([v, n]) => `<label class=chip><input type=radio name=fil value=${v} ${fil === v ? 'checked' : ''}>${n}</label>`).join('');
   const tagChips = tags.length ? `<span class=sepv></span>${tags.map((t) => `<button type=button class="chip ${tagF === t ? 'on' : ''}" data-a=tg data-id="${esc(t)}" aria-pressed=${tagF === t}>#${esc(t)}</button>`).join('')}` : '';
   const sortSel = `<select name=sort aria-label="Sort tasks" class=sortsel>${[['due', 'Due date'], ['pri', 'Priority'], ['recent', 'Recent']].map(([v, n]) => `<option value=${v} ${sortBy === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
   const empty = q || tagF || fil !== 'open' ? '<div class=empty><div class=ei>🔍</div>No tasks match.</div>' : '<div class=empty><div class=ei>✨</div>No open tasks.<br>Type one in the quick-add bar above.</div>';
-  return `<h1>Tasks</h1>${quick}${tv}
+  return `<div class="row sp ph"><h1>Tasks</h1>${hud()}</div>${quick}${tv}
   <div class=row style="gap:8px;margin-bottom:8px"><input type=text id=q placeholder="Search tasks" value="${esc(q)}" aria-label="Search tasks"${''}>${sortSel}</div>
   <div class=chips id=fil>${chips}${tagChips}</div>
-  <div class=card>${l.map(taskRow).join('') || empty}</div>`;
+  <div class="card scrollbox fabpad">${l.map(taskRow).join('') || empty}</div>`;
 }
 function vCal() {
   const t = today(), m0 = calM || L.monthStart(t), ws = S.settings.weekStart, first = L.wk(m0, ws), end = L.monthEnd(m0), cells = [];
@@ -218,18 +213,19 @@ function vRewards() {
       const btn = seg === 'unlocked' ? `<button class="${canAfford ? 'btn' : 'btn out'} sm" data-a=claimr data-id=${r.id} ${canAfford ? '' : 'disabled'}>${canAfford ? 'Claim' : 'Need 🪙 ' + cost}</button>` : '<span class=mu>✓ Claimed</span>';
       return card(r.name, 'From ' + r.src, btn, cost);
     }).join('') || '<p class=mu>Nothing here yet.</p>';
-  return `<div class="row sp"><div><h1 style="margin:0">Rewards</h1><p class=mu style="margin:4px 0 0">Wallet: <b class=am style="font-size:16px">🪙 ${S.coins || 0} Supercoins</b></p></div><button class="btn out sm" data-a=wal>History</button></div>
+  return `<div class="row sp ph"><h1>Rewards</h1>${hud()}</div>
+  <div class="row sp" style="margin:-6px 0 12px"><span class=mu>Spend your Supercoins on rewards you set</span><button class="btn out sm" data-a=wal style="flex:none;white-space:nowrap">History</button></div>
   <div class="card row"><div class=ic style="display:grid;place-items:center;border-radius:14px;background:var(--tr)">❄</div><div class=grow><b>Streak freezes: ${fz} / ${L.FREEZE_MAX}</b><div class=mu>Used automatically when you miss a period.</div></div><button class="btn out sm" data-a=bfz ${fz >= L.FREEZE_MAX || (S.coins || 0) < L.FREEZE_COST ? 'disabled' : ''}>🪙 ${L.FREEZE_COST}</button></div>
   <div class=mu style="margin-top:8px;font-size:12px">Task earnings: <span class="pri-High">High: 🪙 5</span> · <span class="pri-Medium">Medium: 🪙 3</span> · <span class="pri-Low">Low: 🪙 2</span> · Logged time: 🪙 ${rate}/hour</div>
   <div class=seg role=radiogroup id=rseg style="margin-top:10px">${['unlocked', 'upcoming', 'claimed', 'badges'].map((s) => `<label><input type=radio name=rs value=${s} ${seg === s ? 'checked' : ''}>${s[0].toUpperCase() + s.slice(1)}</label>`).join('')}</div>
-  ${body}`;
+  <div class="scrollbox fabpad">${body}</div>`;
 }
 function vStats() {
   const m = view?.m || 'habits', H = S.habits, ev = H.flatMap((h) => h.evals).filter((e) => !e.fz), met = ev.filter((e) => e.ok).length;
   const tk = S.tasks, sec = S.sessions.reduce((a, s) => a + s.dur, 0), cats = {};
   S.sessions.forEach((s) => { const k = tk.find((x) => x.id === s.t); if (k) { const c = k.cat || 'Other'; cats[c] = (cats[c] || 0) + s.dur; } });
   const st = (n, l) => `<div class=card style="flex:1;margin:0"><div class=num style="font-size:28px">${n}</div><div class=mu>${l}</div></div>`;
-  const week = ev.slice(-12), head = `<div class="row sp"><h1>Statistics</h1><button class=ic data-a=tab data-id=settings aria-label=Back>←</button></div><div class=seg id=mseg>${['habits', 'tasks', 'week'].map((x) => `<label><input type=radio name=ms value=${x} ${m === x ? 'checked' : ''}>${x === 'week' ? 'Weekly review' : x[0].toUpperCase() + x.slice(1)}</label>`).join('')}</div>`;
+  const week = ev.slice(-12), head = `<div class="row sp ph"><h1>Statistics</h1><div class=row style="gap:8px">${hud()}<button class=ic data-a=tab data-id=settings aria-label=Back>←</button></div></div><div class=seg id=mseg>${['habits', 'tasks', 'week'].map((x) => `<label><input type=radio name=ms value=${x} ${m === x ? 'checked' : ''}>${x === 'week' ? 'Weekly review' : x[0].toUpperCase() + x.slice(1)}</label>`).join('')}</div>`;
   if (m === 'week') {
     const o = view?.w || 0, w = L.weekReview(S, o), mxd = Math.max(1, ...w.days.map((d) => d.habits + d.tasks)), DN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     return `${head}<div class="row sp" style="margin-bottom:12px"><button class=ic data-a=wk data-id=-1 aria-label="Previous week">‹</button><b>${fmtDay(w.a)} – ${fmtDay(w.b)}${o === 0 ? ' (this week)' : ''}</b><button class=ic data-a=wk data-id=1 ${o >= 0 ? 'disabled' : ''} aria-label="Next week">›</button></div>
@@ -251,13 +247,19 @@ function vStats() {
   <div class=lbl>Time by category</div><div class=card>${Object.entries(cats).map(([c, s]) => `<div class="row sp"><span>${esc(c)}</span><b>${hm(s)}</b></div>${bar(s, sec)}`).join('') || '<span class=mu>No time logged.</span>'}</div>
   <div class=lbl>Estimates vs actual</div><div class=card>${acc == null ? '<span class=mu>Add a time estimate to a task and log time on it to see how accurate you are.</span>' : `Across ${est.length} completed task(s) you worked <b>${acc}%</b> of the time you estimated. ${acc > 115 ? 'You tend to underestimate.' : acc < 85 ? 'You tend to overestimate.' : 'Nicely calibrated!'}`}</div>`;
 }
+/** Pages with a fixed frame keep everything still except the one .scrollbox list. */
+const FIXED_TABS = ['today', 'habits', 'tasks', 'rewards'];
+let lastTab = '';
+function setApp(html, fixed) { const a = $('#app'); a.classList.toggle('fixed', !!fixed); a.innerHTML = html; }
 function render() {
   if (tab === 'task' && view?.task) return taskDetail(view.task);
   const v = { today: vToday, habits: vHabits, tasks: vTasks, rewards: vRewards, stats: vStats, settings: vSettings }[tab];
   const fq = document.activeElement?.id === 'q';
   const fabAction = { habits: 'nh', tasks: 'nt', rewards: 'nr' }[tab];
   const fabHtml = fabAction ? `<button class="fab-btn" data-a=${fabAction} aria-label="Add new item">+</button>` : '';
-  $('#app').innerHTML = v() + fabHtml;
+  const sb = document.querySelector('#app .scrollbox'), keep = sb && lastTab === tab ? sb.scrollTop : 0;
+  setApp(v() + fabHtml, FIXED_TABS.includes(tab)); lastTab = tab;
+  const nb = document.querySelector('#app .scrollbox'); if (nb && keep) nb.scrollTop = keep;
   if (fq) { const i = $('#q'); i.focus(); i.setSelectionRange(99, 99); }
   const T = [['today', '◉', 'Today'], ['habits', '↻', 'Habits'], ['tasks', '☑', 'Tasks'], ['rewards', '★', 'Rewards'], ['settings', '⚙', 'Settings']];
   $('#tabs').innerHTML = T.map(([k, i, n]) => `<button data-a=tab data-id=${k} ${tab === k ? 'aria-current=page' : ''}><span aria-hidden=true>${i}</span>${n}</button>`).join('');
@@ -383,24 +385,24 @@ function saveTask(id) {
   const nk = mkTask(fields, ms);
   S.tasks.push(nk); L.log(S, 'task_created', nk.id); save(); sheet(); render();
 }
-function pomoText(k) { const f = (S.timer?.pomo || 25) * 60, e = el(k); const r = Math.ceil(f - (e % f)); return `🍅 ${Math.floor(e / f)} done · break in ${String(Math.floor(r / 60)).padStart(2, '0')}:${String(r % 60).padStart(2, '0')}`; }
+function pomoText(k) { const f = (S.timers[k.id]?.pomo || 25) * 60, e = el(k); const r = Math.ceil(f - (e % f)); return `🍅 ${Math.floor(e / f)} done · break in ${String(Math.floor(r / 60)).padStart(2, '0')}:${String(r % 60).padStart(2, '0')}`; }
 function taskDetail(id) {
   const k = S.tasks.find((x) => x.id === id); if (!k) return; view = { task: id }; tab = 'task';
-  const rn = run(k), paused = rn && !S.timer.run, ses = S.sessions.filter((s) => s.t === id).sort((a, b) => a.start - b.start);
+  const rn = run(k), paused = rn && !S.timers[id].run, ses = S.sessions.filter((s) => s.t === id).sort((a, b) => a.start - b.start);
   const ev = L.everySec(k), [sd, sn] = L.subProg(k), wsec = L.worked(S, k) + el(k);
   $('#tabs').hidden = true;
-  $('#app').innerHTML = `<div class=row><button class=ic data-a=back aria-label=Back>←</button><h1 style="font-size:24px;margin:0">${esc(k.title)}</h1></div>
+  lastTab = 'task'; setApp(`<div class=row><button class=ic data-a=back aria-label=Back>←</button><h1 class=grow style="font-size:24px;margin:0">${esc(k.title)}</h1>${hud()}</div>
   <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (k.time ? ' ' + k.time : '') : 'No deadline'} · ${k.status}${k.rec ? ' · 🔁 ' + L.recLabel(k.rec) : ''}</p>
   ${(k.tags || []).length ? `<p class=mu style="margin-top:-8px">${k.tags.map((x) => '#' + esc(x)).join(' ')}</p>` : ''}
-  <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div>${rn && S.timer.pomo ? `<div class=mu style="text-align:center;margin-bottom:8px" data-pomo=${id}>${pomoText(k)}</div>` : ''}<div class=row>
-  ${k.status === 'Completed' ? '' : rn && S.timer.run ? `<button class="btn out" data-a=pause>Pause</button><button class=btn data-a=stop>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume>Resume</button><button class="btn out" data-a=stop>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button><button class="btn out" data-a=startp data-id=${id}>🍅 Focus</button>`}</div></div>
+  <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div>${rn && S.timers[id].pomo ? `<div class=mu style="text-align:center;margin-bottom:8px" data-pomo=${id}>${pomoText(k)}</div>` : ''}<div class=row>
+  ${k.status === 'Completed' ? '' : rn && S.timers[id].run ? `<button class="btn out" data-a=pause data-id=${id}>Pause</button><button class=btn data-a=stop data-id=${id}>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume data-id=${id}>Resume</button><button class="btn out" data-a=stop data-id=${id}>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button><button class="btn out" data-a=startp data-id=${id}>🍅 Focus</button>`}</div></div>
   ${k.est ? `<div class=card><div class="row sp"><b>Estimate</b><span class=mu>${hm(k.est * 60)} planned · ${hm(wsec)} worked (${Math.round(wsec / (k.est * 60) * 100)}%)</span></div>${bar(wsec, k.est * 60)}</div>` : ''}
   <div class=lbl>Steps${sn ? ` · ${sd}/${sn}` : ''}</div><div class=card>${(k.sub || []).map((x) => `<div class=row style="padding:4px 0"><button class="chk ${x.d ? 'done' : ''}" data-a=sub data-id=${id} data-sid=${x.id} aria-label="${x.d ? 'Undo' : 'Complete'} step ${esc(x.t)}">${x.d ? '✓' : ''}</button><div class=grow style="${x.d ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(x.t)}</div><button class=ic data-a=sdel data-id=${id} data-sid=${x.id} aria-label="Delete step ${esc(x.t)}">✕</button></div>`).join('')}${sn ? bar(sd, sn) : ''}<div class=row style="margin-top:8px"><input type=text id=sn maxlength=100 placeholder="Add a step" aria-label="Add a step"><button class="btn sm" data-a=sadd data-id=${id}>Add</button></div></div>
   ${k.ms.mode === 'worklog' ? `<div class=card><b>Milestone</b> <span class=am>${hm(L.toward(k))} / ${k.ms.every}h</span>${bar(L.toward(k), ev)}<div class=mu>${esc(k.ms.reward || '')}</div></div>` : k.ms.reward ? `<div class=card><b>Reward on completion:</b> ${esc(k.ms.reward)}</div>` : ''}
   <div class=lbl>Work log · total ${hm(L.worked(S, k))}</div><div class=card>${ses.map((s) => `<div class="card row sp" style="margin:6px 0;padding:10px 12px;background:var(--sf)"><div><div style="font-weight:600;font-size:13px">${new Date(s.start).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · <span class=mu>${s.type === 'timer' ? 'Timer' : 'Manual'}</span></div>${s.note ? `<div class=mu style="margin-top:3px;font-size:12px;color:var(--tx)">💬 ${esc(s.note)}</div>` : ''}</div><b class=am style="font-size:14px">${hm(s.dur)}</b></div>`).join('') || '<span class=mu>No sessions yet.</span>'}</div>
   <div class=row><button class="btn out" data-a=lt data-id=${id}>+ Log time</button>${k.status !== 'Completed' ? `<button class=btn data-a=tc data-id=${id}>Mark complete</button>` : ''}</div>
   <div class=row style="margin-top:12px"><button class="btn out" data-a=et data-id=${id}>Edit</button><button class="btn out" data-a=dup data-id=${id}>Duplicate</button><button class="btn out" data-a=hist data-kind=task data-id=${id}>History</button></div>
-  <button class="btn danger" style="margin-top:12px" data-a=dt data-id=${id}>Delete task</button>`;
+  <button class="btn danger" style="margin-top:12px" data-a=dt data-id=${id}>Delete task</button>`, false);
 }
 function habitDetail(id) {
   const h = S.habits.find((x) => x.id === id); if (!h) return; const t = today(), p = L.period(S, h, t), set = L.hDays(S, h), ws = L.wk(t, S.settings.weekStart), st = L.status(S, h);
@@ -455,7 +457,7 @@ function vSettings() {
   const c = (name, label, on) => `<label class=chip><input type=checkbox name=${name} ${on ? 'checked' : ''}>${label}</label>`;
   const sec = (title, body) => `<div class="card sec"><div class=sct>${title}</div>${body}</div>`, custom = S.cats || [];
   const cats = L.allCats(S).map((x) => `<span class=catchip>${esc(x)} <i>${L.catUsage(S, x)}</i>${custom.includes(x) ? `<button data-a=delcat data-id="${esc(x)}" aria-label="Delete category ${esc(x)}">✕</button>` : ''}</span>`).join('');
-  return `<h1>Settings</h1>
+  return `<div class="row sp ph"><h1>Settings</h1>${hud()}</div>
  <button class="btn out" data-a=tab data-id=stats style="margin-bottom:12px">📊 Statistics &amp; weekly review</button>
  ${sec('Appearance', `<div class=lbl style="margin-top:0">Theme</div>${seg('theme', ['system', 'light', 'dark'], S.theme)}${fld('Week starts on', `<select name=ws>${[1, 2, 3, 4, 5, 6, 0].map((i) => `<option value=${i} ${S.settings.weekStart === i ? 'selected' : ''}>${days[i]}</option>`).join('')}</select>`)}`)}
  ${sec('Coins for logged time', `${fld('Supercoins per hour logged on tasks', `<input type=number name=sc min=0 max=100 step=0.5 value="${S.settings.coinsPerHour ?? 2}">`)}<p class=mu style="margin:-4px 0 0">Timer and manual sessions both count. Part-hours add up, so 30 minutes at 2 per hour pays 1 coin. Set 0 to turn off.</p>`)}
@@ -485,8 +487,8 @@ function completeTask(k) {
   save(); afterTask(k.id);
 }
 function startT(k, id, pomo) {
-  if (timerBusy()) return; if (S.timer && S.timer.id !== id && !confirm('Another timer is running. Stop it and start this one?')) return;
-  L.startTimer(S, k, pomo); save(); taskDetail(id);
+  if (timerBusy()) return;
+  L.startTimer(S, k, pomo); save(); taskDetail(id); // several tasks can run their own timers at the same time
 }
 function leaveTask() { tab = origin || 'today'; view = null; $('#tabs').hidden = false; render(); }
 function doCheckin(h) {
@@ -536,18 +538,17 @@ const A = {
   td: ({ id, e }) => { e.preventDefault(); if (tab !== 'task') origin = tab; taskDetail(id); }, back: () => leaveTask(),
   et: ({ k }) => fTask(k),
   start: ({ k, id }) => startT(k, id, 0), startp: ({ k, id }) => startT(k, id, 25),
-  pause: () => { if (timerBusy()) return; const i = S.timer?.id; L.pauseTimer(S); save(); i && taskDetail(i); }, resume: () => { if (timerBusy()) return; const i = S.timer?.id; L.resumeTimer(S); save(); i && taskDetail(i); },
-  stop: () => {
-    if (timerBusy()) return; const id = S.timer?.id; if (!id) return;
-    const k = byId('tasks', id); const dur = L.elapsed(S, k);
+  pause: ({ k, id }) => { if (timerBusy() || !k) return; L.pauseTimer(S, k); save(); taskDetail(id); },
+  resume: ({ k, id }) => { if (timerBusy() || !k) return; L.resumeTimer(S, k); save(); taskDetail(id); },
+  stop: ({ k, id }) => {
+    if (timerBusy() || !k || !S.timers[id]) return; const dur = L.elapsed(S, k);
     sheet(`<div class="row sp"><h2 class=num>Save timer session</h2>${closeBtn}</div><p class=mu>Logged <b>${clock(dur)}</b> for "${esc(k.title)}"</p>${fld('Message / Note (optional)', '<input type=text name=note maxlength=200 placeholder="What did you work on?">')}<button class=btn data-a=sstop data-id=${id}>Save session</button>`);
   },
   sstop: ({ k, id }) => {
-    if (!S.timer) return sheet();
-    const note = val('note').trim(); celebrated = false;
-    const dur = L.elapsed(S, k);
-    S.timer = null;
-    if (k && dur >= 1) L.addSession(S, k, dur, 'timer', note);
+    if (!k || !S.timers[id]) return sheet();
+    const note = val('note').trim(); celebrated = false; const dur = L.elapsed(S, k);
+    delete S.timers[id];
+    if (dur >= 1) L.addSession(S, k, dur, 'timer', note);
     sheet(); save(); taskDetail(id);
   },
   reopen: ({ k, id }) => { L.reopen(S, k); save(); taskDetail(id); },
@@ -659,13 +660,14 @@ nat.onAppState((active) => { if (active) refresh(); else store.flush(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) store.flush(); else refresh(); });
 addEventListener('pagehide', () => store.flush());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
-let lastPomo = { id: '', n: 0 };
+const lastPomo = {};
 setInterval(() => {
   document.querySelectorAll('[data-tick]').forEach((n) => { const k = byId('tasks', n.dataset.tick); if (k) n.textContent = clock(el(k)); });
-  document.querySelectorAll('[data-pomo]').forEach((n) => { const k = byId('tasks', n.dataset.pomo); if (k && S.timer?.pomo) n.textContent = pomoText(k); });
-  if (S.timer?.run && S.timer.pomo) {
-    const k = byId('tasks', S.timer.id), n = k ? Math.floor(el(k) / (S.timer.pomo * 60)) : 0;
-    if (lastPomo.id !== S.timer.id) lastPomo = { id: S.timer.id, n }; else if (n > lastPomo.n) { lastPomo.n = n; toast('🍅 Focus block done. Take a short break, then resume.'); }
+  document.querySelectorAll('[data-pomo]').forEach((n) => { const k = byId('tasks', n.dataset.pomo); if (k && S.timers[k.id]?.pomo) n.textContent = pomoText(k); });
+  for (const [id, t] of Object.entries(S.timers)) { // pomodoro alert per running focus timer
+    if (!t.run || !t.pomo) { delete lastPomo[id]; continue; }
+    const k = byId('tasks', id); if (!k) continue; const n = Math.floor(el(k) / (t.pomo * 60));
+    if (lastPomo[id] == null) lastPomo[id] = n; else if (n > lastPomo[id]) { lastPomo[id] = n; toast(`🍅 Focus block done for "${k.title}". Take a short break, then resume.`); }
   }
 }, 1000);
 setInterval(() => { const key = today() + '|' + L.tzKey(); if (key !== lastKey) refresh(); else if (overSig() !== lastOver) { lastOver = overSig(); if (tab !== 'task') render(); } }, 20000);

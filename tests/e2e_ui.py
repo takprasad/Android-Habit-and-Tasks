@@ -34,7 +34,30 @@ with sync_playwright() as p:
     ct=page.locator('.tile >> nth=0').inner_text().lower(); wk=S(page,"L.weekReview(S,0).earned"); assert 'this week' in ct and str(wk) in ct.split('\n')[1], (ct, wk)
     S(page,"(S.audit.push({type:'coins_earned',id:'x',p:{earned:7,coins:1},at:Date.now()-20*864e5}), S.earned+=7, null)"); tab('rewards'); tab('today')
     assert page.locator('.tile >> nth=0').inner_text().split('\n')[1].strip()==str(wk), 'older coins are not counted in the weekly card'
-    S(page,"(S.tasks.pop(), null)"); tab('tasks')
+    S(page,"(S.tasks.pop(), null)")
+    assert page.locator('.ringrow').count()==0 and "let's get going" not in tx and page.locator('#app svg circle').count()==0, 'progress ring card removed'
+    # ---- fixed frames: only the list scrolls, headers stay put, scroll position survives a re-render
+    S(page,"(Array.from({length:30},(_,i)=>S.tasks.push({id:L.uid(),title:'Bulk '+i,pri:'Low',cat:'Work',due:L.add(L.today(),2+i),time:null,status:'Not Started',start:L.today(),mp:0,fired:0,tags:[],sub:[],est:0,ms:{mode:'once',every:5,after:'reset',reward:'',url:''}})), Array.from({length:14},(_,i)=>S.habits.push({id:L.uid(),name:'BulkH '+i,cat:'Health',type:'daily',n:1,every:2,days:[],start:L.today(),multi:false,ms:{kind:'streak',target:30,policy:'reset',reward:'',url:''},prog:0,best:0,completed:0,resets:0,attempts:[],evals:[],attemptStart:L.today(),evalFrom:L.today(),archived:false,paused:false,ask:null})), null)")
+    def frame(name, pre=None):
+        tab(name); 
+        if pre: pre()
+        page.wait_for_timeout(150)
+        assert page.evaluate("document.scrollingElement.scrollHeight <= window.innerHeight + 1"), name+': the page itself must not scroll'
+        assert page.locator('#app.fixed').count()==1 and page.locator('.hud').count()==1 and page.inner_text('.hud').startswith('Lv'), name+': frame + level/coin pill'
+        sb=page.locator('#app .scrollbox').first; assert sb.evaluate("e=>e.scrollHeight>e.clientHeight+40"), name+': list should be scrollable'
+        y0=page.locator('#app h1').first.bounding_box()['y']; b0=page.locator('#tabs').bounding_box()['y']; sb.evaluate("e=>{e.scrollTop=500}"); page.wait_for_timeout(120)
+        assert sb.evaluate("e=>e.scrollTop")>150, name+': list scrolled'; assert page.locator('#app h1').first.bounding_box()['y']==y0 and page.locator('#tabs').bounding_box()['y']==b0, name+': header and tab bar stay put'
+        return sb
+    frame('today'); frame('habits')
+    sb=frame('tasks'); page.click('#fil label.chip:has-text("All")'); assert page.locator('#app .scrollbox').first.evaluate("e=>e.scrollTop")>=300, 'scroll position kept across a re-render'; page.click('#fil label.chip:has-text("Open")')
+    frame('rewards', lambda: page.click('#rseg label:has-text("Badges")')); page.click('#rseg label:has-text("Unlocked")')
+    S(page,"(S.tasks=S.tasks.filter(k=>!k.title.startsWith('Bulk ')), S.habits=S.habits.filter(h=>!h.name.startsWith('BulkH')), null)")
+    # level + coins pill on the pages that scroll normally too
+    tab('settings'); assert page.locator('.hud').count()==1 and 'Lv' in page.inner_text('.hud') and page.locator('#app.fixed').count()==0
+    page.click('[data-a=tab][data-id=stats]'); assert page.locator('.hud').count()==1; tab('tasks')
+    page.click('#tvseg label:has-text("Calendar")'); assert page.locator('.hud').count()==1 and page.locator('#app .scrollbox .cal').count()==1; page.click('#tvseg label:has-text("List")')
+    page.click('#app .card .grow:has-text("Call mom")'); page.wait_for_selector('#sn'); assert page.locator('.hud').count()==1 and page.locator('#app.fixed').count()==0; page.click('.hud'); assert 'how levels work' in page.inner_text('#sheet').lower(); page.click('[data-a=x]'); page.click('button[data-a=back]')
+    tab('tasks')
 
     # ---- task detail: steps
     page.click('#app .card .grow:has-text("Pay rent")'); page.wait_for_selector('#sn')
@@ -62,12 +85,23 @@ with sync_playwright() as p:
     # repeat without due is rejected
     page.click('[data-a=et]'); page.fill('#sheet input[name=due]',''); page.click('[data-a=st]'); assert 'need a due date' in page.inner_text('#toast'); page.click('[data-a=x]')
     # ---- pomodoro
-    page.click('[data-a=startp]'); page.wait_for_selector('[data-pomo]'); print('pomo:', page.inner_text('[data-pomo]')); assert S(page,"S.timer.pomo")==25
+    page.click('[data-a=startp]'); page.wait_for_selector('[data-pomo]'); print('pomo:', page.inner_text('[data-pomo]')); assert S(page,"Object.values(S.timers)[0].pomo")==25
     page.wait_for_timeout(800); page.click('[data-a=stop]'); page.click('[data-a=sstop]')
     c0=S(page,"S.coins"); e0=S(page,"S.earned"); page.click('[data-a=lt]'); page.fill('#sheet input[name=mm]','30'); page.click('[data-a=slt]')
     assert S(page,"S.coins")==c0+1 and S(page,"S.earned")==e0+1, 'a 30 minute session earns 1 coin at 2 per hour'
     c1=S(page,"S.coins"); page.click('[data-a=lt]'); page.fill('#sheet input[name=mm]','3'); page.click('[data-a=slt]'); assert S(page,"S.coins")==c1, 'under 5 minutes earns nothing'
     page.click('button[data-a=back]')
+    # ---- several timers running at the same time
+    page.click('#app .card .grow:has-text("Call mom")'); page.wait_for_timeout(700); page.click('[data-a=start]'); assert S(page,"Object.keys(S.timers).length")==1
+    page.click('button[data-a=back]'); page.click('#app .card .grow:has-text("Pay rent")'); page.wait_for_timeout(700); page.click('[data-a=start]')
+    assert S(page,"Object.keys(S.timers).length")==2 and S(page,"L.runningCount(S)")==2, 'a second timer does not stop the first'
+    page.click('button[data-a=back]'); assert page.locator('#app .card [data-tick]').count()==2, 'both running tasks show a live timer in the list'
+    page.wait_for_timeout(2300); ticks=page.evaluate("[...document.querySelectorAll('#app .card [data-tick]')].map(n=>n.textContent)"); assert len(ticks)==2 and all(t!='00:00:00' for t in ticks), ticks
+    tab('today'); assert page.locator('#app .card [data-tick]').count()==2, 'Today list shows both too'; tab('tasks')
+    page.click('#app .card .grow:has-text("Pay rent")'); page.wait_for_timeout(700); n0=S(page,"S.sessions.length"); page.click('[data-a=stop]'); page.click('[data-a=sstop]')
+    assert S(page,"Object.keys(S.timers).length")==1 and S(page,"S.sessions.length")==n0+1 and S(page,"S.tasks.find(k=>k.id===Object.keys(S.timers)[0]).title")=='Call mom', 'stopping one timer leaves the other running'
+    page.wait_for_timeout(700); page.click('button[data-a=back]'); page.click('#app .card .grow:has-text("Call mom")'); page.wait_for_timeout(700); page.click('[data-a=pause]'); assert S(page,"Object.values(S.timers)[0].run")==False; page.wait_for_timeout(700); page.click('[data-a=resume]'); page.wait_for_timeout(700)
+    page.click('[data-a=stop]'); page.click('[data-a=sstop]'); assert S(page,"Object.keys(S.timers).length")==0; page.click('button[data-a=back]')
     # ---- calendar
     page.click('#tvseg label:has-text("Calendar")'); page.wait_for_selector('.cal'); page.screenshot(path='/tmp/shot_cal.png')
     page.click('.cal-d.today'); assert page.locator('[data-a=cadd]').count()==1

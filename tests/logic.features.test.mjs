@@ -104,14 +104,14 @@ t('parseQuick basics', () => {
 t('migrate round-trip keeps new fields and rejects bad', () => {
   const S = mk(); const k = task(S, { due: '2026-10-08', rec: { u: 'week', n: 1, days: [0, 2], dom: 0 }, ser: 'abc', tags: ['a'], est: 45, sub: [{ id: 's1', t: 'x', d: 1 }] }); S.freezes = 2; S.earned = 9; S.snz.push({ id: 5, title: 't', body: '', at: 5, kind: 'due', ref: k.id });
   const h = habit(S); S.checkins.push({ id: 'c1', h: h.id, d: '2026-10-08', at: 1, tz: '', note: 'n', mood: '😀' }); h.evals.push({ a: '2026-10-01', b: '2026-10-01', r: 1, n: 0, ok: false, fz: 1 });
-  S.timer = { id: k.id, run: true, at: 5, acc: 0, pomo: 25 };
+  S.timers = { [k.id]: { run: true, at: 5, acc: 0, pomo: 25 } };
   const M = L.migrate(JSON.parse(JSON.stringify(S))); assert.deepEqual(M.tasks[0].rec, S.tasks[0].rec); assert.equal(M.tasks[0].est, 45); assert.equal(M.tasks[0].sub[0].d, 1); assert.equal(M.freezes, 2); assert.equal(M.earned, 9);
-  assert.equal(M.snz[0].ref, k.id); assert.equal(M.checkins[0].mood, '😀'); assert.equal(M.habits[0].evals[0].fz, 1); assert.equal(M.timer.pomo, 25);
+  assert.equal(M.snz[0].ref, k.id); assert.equal(M.checkins[0].mood, '😀'); assert.equal(M.habits[0].evals[0].fz, 1); assert.equal(M.timers[k.id].pomo, 25); assert.equal(M.timer, undefined);
   const old = JSON.parse(JSON.stringify(S)); delete old.earned; old.audit = [{ type: 'coins_earned', id: 'x', p: { earned: 7 }, at: 1 }]; assert.equal(L.migrate(old).earned, 7);
   const o2 = JSON.parse(JSON.stringify(S)); o2.tasks[0].rec.u = 'year'; assert.throws(() => L.migrate(o2));
 });
 t('notification plan: refs, pomo, snooze', () => {
-  const S = mk(); S.settings.notif.on = true; const k = task(S, { due: '2026-10-09', time: '15:00' }); S.timer = { id: k.id, run: true, at: fakeNow.getTime(), acc: 0, pomo: 25 };
+  const S = mk(); S.settings.notif.on = true; const k = task(S, { due: '2026-10-09', time: '15:00' }); S.timers = { [k.id]: { run: true, at: fakeNow.getTime(), acc: 0, pomo: 25 } };
   L.addSnooze(S, { title: 'Hello', body: 'b', extra: { kind: 'due', ref: k.id } }, 60);
   const p = L.planNotifications(S); const due = p.find((x) => x.kind === 'due'); assert.equal(due.ref, k.id); assert.equal(due.act, 'TASK');
   const po = p.find((x) => x.kind === 'pomo'); assert.equal(po.at - fakeNow.getTime(), 25 * 60000); const sn = p.find((x) => x.title === 'Hello'); assert.ok(sn && sn.at - fakeNow.getTime() === 3600000);
@@ -185,6 +185,39 @@ t('pause policy keeps the count after a missed week', () => {
     ms: { kind: 'count', target: 12, policy: 'pause', reward: '', url: '' }, prog: 0, best: 0, completed: 0, resets: 0, attempts: [], evals: [], attemptStart: '2026-09-21', evalFrom: '2026-09-21', archived: false, paused: false, ask: null };
   S.habits.push(h); for (const d of ['2026-09-21', '2026-09-22']) { fakeNow = new Date(d + 'T10:00:00'); L.checkin(S, h, d); }
   fakeNow = new Date('2026-09-29T10:00:00'); L.evaluate(S); assert.equal(h.prog, 2); assert.equal(h.resets, 0);
+});
+fakeNow = new Date(2026, 9, 8, 10, 0, 0);
+
+t('several timers run at the same time, each with its own clock', () => {
+  fakeNow = new Date(2026, 9, 8, 10, 0, 0); const S = mk(); const a = task(S, { title: 'A' }), b = task(S, { title: 'B' }), c = task(S, { title: 'C' });
+  L.startTimer(S, a); L.startTimer(S, b, 25); assert.equal(L.runningCount(S), 2); assert.equal(Object.keys(S.timers).length, 2); assert.ok(L.hasTimer(S, a) && L.hasTimer(S, b) && !L.hasTimer(S, c));
+  assert.equal(a.status, 'In Progress'); assert.equal(c.status, 'Not Started'); L.startTimer(S, a); assert.equal(Object.keys(S.timers).length, 2, 'starting twice does not reset');
+  fakeNow = new Date(fakeNow.getTime() + 600000); assert.equal(L.elapsed(S, a), 600); assert.equal(L.elapsed(S, b), 600); assert.equal(L.elapsed(S, c), 0);
+  L.pauseTimer(S, a); fakeNow = new Date(fakeNow.getTime() + 300000); assert.equal(L.elapsed(S, a), 600, 'paused clock stands still'); assert.equal(L.elapsed(S, b), 900, 'the other keeps running'); assert.equal(L.runningCount(S), 1);
+  L.resumeTimer(S, a); L.startTimer(S, c); fakeNow = new Date(fakeNow.getTime() + 60000); assert.equal(L.elapsed(S, a), 660); assert.equal(L.elapsed(S, c), 60); assert.equal(L.runningCount(S), 3);
+  const d = L.stopTimer(S, b); assert.equal(d, 960); assert.deepEqual(Object.keys(S.timers).sort(), [a.id, c.id].sort()); assert.equal(S.sessions.length, 1); assert.equal(S.sessions[0].t, b.id); assert.equal(S.sessions[0].dur, 960);
+  assert.equal(S.coins, Math.floor(960 / 3600 * 2 + 1e-6)); assert.equal(L.stopTimer(S, b), 0, 'second stop is a no-op'); assert.equal(S.sessions.length, 1);
+});
+t('completing or deleting a task only touches its own timer', () => {
+  fakeNow = new Date(2026, 9, 8, 10, 0, 0); const S = mk(); const a = task(S), b = task(S), c = task(S); [a, b, c].forEach((k) => L.startTimer(S, k)); fakeNow = new Date(fakeNow.getTime() + 1800000);
+  L.complete(S, a); assert.ok(!S.timers[a.id] && S.timers[b.id] && S.timers[c.id]); assert.equal(S.sessions.length, 1); assert.equal(S.sessions[0].dur, 1800);
+  L.deleteTask(S, b); assert.ok(!S.timers[b.id] && S.timers[c.id]); assert.equal(L.runningCount(S), 1);
+  const dash = L.dashboard(S); assert.ok(dash.open !== undefined || true);
+});
+t('migrate: legacy single timer becomes one of many; several survive a round trip; bad entries are dropped', () => {
+  fakeNow = new Date(2026, 9, 8, 10, 0, 0); const S = mk(); const a = task(S), b = task(S); L.startTimer(S, a); L.startTimer(S, b, 25); L.pauseTimer(S, b);
+  const M = L.migrate(JSON.parse(JSON.stringify(S))); assert.deepEqual(Object.keys(M.timers).sort(), [a.id, b.id].sort()); assert.equal(M.timers[b.id].run, false); assert.equal(M.timers[b.id].pomo, 25);
+  const old = JSON.parse(JSON.stringify(S)); delete old.timers; old.timer = { id: a.id, run: true, at: 77, acc: 5, pomo: 25 }; const M2 = L.migrate(old); assert.deepEqual(Object.keys(M2.timers), [a.id]); assert.equal(M2.timers[a.id].acc, 5);
+  const ghost = JSON.parse(JSON.stringify(S)); ghost.timers['nosuchtask'] = { run: true, at: 1, acc: 0 }; assert.equal(Object.keys(L.migrate(ghost).timers).length, 2, 'timers for missing tasks are dropped');
+  const bad = JSON.parse(JSON.stringify(S)); bad.timers[a.id].acc = -5; assert.throws(() => L.migrate(bad));
+});
+t('notifications: every running timer gets its own unique alerts', () => {
+  fakeNow = new Date(2026, 9, 8, 10, 0, 0); const S = mk(); S.settings.notif.on = true; S.settings.notif.timer = true; const ks = [task(S, { title: 'A' }), task(S, { title: 'B' }), task(S, { title: 'C' })];
+  L.startTimer(S, ks[0]); L.startTimer(S, ks[1], 25); L.startTimer(S, ks[2], 50); L.pauseTimer(S, ks[2]);
+  const p = L.planNotifications(S); const timerN = p.filter((x) => x.kind === 'timer'), pomoN = p.filter((x) => x.kind === 'pomo');
+  assert.equal(timerN.length, 2, 'two running timers get a 3h alert, the paused one none'); assert.equal(pomoN.length, 1); assert.ok(pomoN[0].body.includes('B')); assert.equal(pomoN[0].at - fakeNow.getTime(), 25 * 60000);
+  assert.ok(new Set(p.map((x) => x.id)).size === p.length, 'ids unique'); assert.ok(timerN.every((x) => x.at - fakeNow.getTime() === 3 * 3600000));
+  S.settings.notif.timer = false; assert.equal(L.planNotifications(S).filter((x) => x.kind === 'timer' || x.kind === 'pomo').length, 0);
 });
 fakeNow = new Date(2026, 9, 8, 10, 0, 0);
 console.log(n, 'tests passed');

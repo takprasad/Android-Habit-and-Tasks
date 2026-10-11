@@ -151,3 +151,14 @@ ul.ul,ol.ul{margin:6px 0 10px;padding-left:20px;line-height:1.5;font-size:14px}
 .badge .bp{font-size:12px;font-weight:700;margin-top:6px;color:var(--mu)}.badge .bp.ok{color:var(--ac)}
 .badge .bar{margin-top:4px}
 .coin-pill{white-space:nowrap;flex:none}.row.sp>h1{font-size:clamp(24px,7.4vw,34px);min-width:0;margin-right:8px}
+
+/* ---- v8: fixed page frames (only the list scrolls) + HUD ---- */
+#app.fixed{height:100vh;height:100dvh;overflow-y:auto;display:flex;flex-direction:column;padding-bottom:calc(66px + var(--sab))}
+#app.fixed>*{flex:none}
+#app.fixed>.scrollbox{flex:1 1 auto;min-height:150px}
+.scrollbox{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;touch-action:pan-y}
+.scrollbox.fabpad::after{content:'';display:block;height:72px}
+.card.scrollbox{margin-bottom:0}
+.ph{margin:6px 0 14px}.ph h1{margin:0}
+button.hud{font:inherit;font-size:13px;font-weight:700;cursor:pointer}.hud:active{opacity:.7}
+.scrollbox>.lbl:first-child{margin-top:0}

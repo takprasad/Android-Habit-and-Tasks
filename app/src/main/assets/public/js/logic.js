@@ -42,7 +42,7 @@ export const defaultSettings = () => ({
   notif: { on: false, daily: true, dailyTime: '20:00', risk: true, due: true, timer: true, reward: true },
 });
 export const DEFAULT_CATS = ['Health', 'Work', 'Learning', 'Home', 'Personal'];
-export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timer: null, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [], cats: [], coinFrac: 0 });
+export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timers: {}, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [], cats: [], coinFrac: 0 });
 export const log = (S, type, id, p) => { S.audit.push({ type, id, p, at: clock.now().getTime() }); };
 
 /* ---------- habit engine ---------- */
@@ -198,7 +198,10 @@ export function unarchiveHabit(S, h) { h.archived = false; h.evalFrom = period(S
 
 /* ---------- task engine ---------- */
 export const overdue = (k) => !!k.due && isOpen(k) && (k.due < today() || (k.due === today() && !!k.time && k.time < nowHM()));
-export const elapsed = (S, k) => S.timer && S.timer.id === k.id ? Math.max(0, S.timer.acc + (S.timer.run ? (clock.now().getTime() - S.timer.at) / 1000 : 0)) : 0;
+/* Timers: S.timers = { [taskId]: { run, at, acc, pomo? } }, any number of tasks can have one running (or paused) at the same time. */
+export const elapsed = (S, k) => { const t = S.timers?.[k.id]; return t ? Math.max(0, t.acc + (t.run ? (clock.now().getTime() - t.at) / 1000 : 0)) : 0; };
+export const hasTimer = (S, k) => !!S.timers?.[k.id];
+export const runningCount = (S) => Object.values(S.timers || {}).filter((t) => t.run).length;
 export const worked = (S, k) => S.sessions.filter((s) => s.t === k.id).reduce((a, s) => a + s.dur, 0);
 export const everySec = (k) => k.ms.every * 3600;
 /** Seconds shown toward the *next* reward. In keep-adding mode mp is cumulative. */
@@ -235,7 +238,7 @@ export function complete(S, k) {
   const earned = Math.max(0, baseCoins - delayDays);
   S.coins = (S.coins || 0) + earned; S.earned = (S.earned || 0) + earned;
   log(S, 'coins_earned', k.id, { earned, coins: S.coins });
-  if (S.timer && S.timer.id === k.id) stopTimer(S);
+  if (S.timers?.[k.id]) stopTimer(S, k);
   const nx = spawnNext(S, k), tail = nx ? ` Next one is due ${nx.due}.` : '';
   if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, `🎉 Milestone reached! Earned 🪙 ${earned} Supercoins!${tail}`); }
   else { hooks.celebrate(`🎉 Task completed! Earned 🪙 ${earned} Supercoins.${tail}`); }
@@ -456,30 +459,29 @@ export function claimReward(S, r) {
 }
 export function reopen(S, k) { k.status = 'In Progress'; log(S, 'task_reopened', k.id); }
 export function startTimer(S, k, pomo = 0) {
-  if (S.timer && S.timer.id !== k.id) stopTimer(S);
-  if (S.timer && S.timer.id === k.id) return;
-  S.timer = { id: k.id, run: true, at: clock.now().getTime(), acc: 0, ...(pomo ? { pomo } : {}) };
+  if (!S.timers) S.timers = {};
+  if (S.timers[k.id]) return; // already has one; other tasks' timers are left running
+  S.timers[k.id] = { run: true, at: clock.now().getTime(), acc: 0, ...(pomo ? { pomo } : {}) };
   if (k.status === 'Not Started') k.status = 'In Progress';
   log(S, 'timer_started', k.id);
 }
-export function pauseTimer(S) { const k = S.tasks.find((x) => x.id === S.timer?.id); if (!k || !S.timer.run) return; S.timer.acc = elapsed(S, k); S.timer.run = false; log(S, 'timer_paused', k.id); }
-export function resumeTimer(S) { if (!S.timer || S.timer.run) return; S.timer.at = clock.now().getTime(); S.timer.run = true; log(S, 'timer_resumed', S.timer.id); }
-/** Stop and save. Idempotent: a second call finds no timer and creates no session. Returns the session length or 0. */
-export function stopTimer(S) {
-  if (!S.timer) return 0;
-  const k = S.tasks.find((x) => x.id === S.timer.id), d = k ? elapsed(S, k) : 0;
-  S.timer = null;
-  if (k && d >= 1) { addSession(S, k, d, 'timer'); return d; }
+export function pauseTimer(S, k) { const t = S.timers?.[k.id]; if (!t || !t.run) return; t.acc = elapsed(S, k); t.run = false; log(S, 'timer_paused', k.id); }
+export function resumeTimer(S, k) { const t = S.timers?.[k.id]; if (!t || t.run) return; t.at = clock.now().getTime(); t.run = true; log(S, 'timer_resumed', k.id); }
+/** Stop and save one task's timer. Idempotent: a second call finds no timer and creates no session. Returns the session length or 0. */
+export function stopTimer(S, k) {
+  if (!S.timers?.[k.id]) return 0;
+  const d = elapsed(S, k); delete S.timers[k.id];
+  if (d >= 1) { addSession(S, k, d, 'timer'); return d; }
   return 0;
 }
 export function deleteTask(S, k) {
-  if (S.timer?.id === k.id) S.timer = null;
+  if (S.timers) delete S.timers[k.id];
   S.tasks = S.tasks.filter((x) => x !== k); S.sessions = S.sessions.filter((s) => s.t !== k.id);
 }
 
 /** Today dashboard selection. */
 export function dashboard(S) {
-  const t = today(), run = (k) => S.timer && S.timer.id === k.id;
+  const t = today(), run = (k) => !!S.timers?.[k.id];
   const habits = S.habits.filter((h) => !h.archived && !h.paused && isScheduled(h, t));
   const open = S.tasks.filter(isOpen);
   const dueL = open.filter((k) => (k.due && k.due <= t) || (run(k) && k.due)).sort((a, b) =>
@@ -594,8 +596,10 @@ export function migrate(raw) {
   S.audit = opt(raw.audit, [], (v) => arr(v, 'audit').map((e) => ({ type: str(e.type, 'audit type', 64), id: typeof e.id === 'string' ? e.id : '', p: e.p && typeof e.p === 'object' ? e.p : undefined, at: num(e.at, 'audit at') })));
   S.earned = opt(raw.earned, S.audit.filter((e) => e.type === 'coins_earned' || e.type === 'session_coins').reduce((a, e) => a + (+e.p?.earned || 0), 0), (v) => num(v, 'earned', 0));
   S.snz = opt(raw.snz, [], (v) => arr(v, 'snz').slice(0, 20).map((x) => ({ id: num(x.id, 'snz id', 0, 2147483647), title: str(x.title, 'snz title', 200), body: optStr(x.body, 'snz body', 500), at: num(x.at, 'snz at'), kind: optStr(x.kind, 'snz kind', 20), ref: typeof x.ref === 'string' && ID.test(x.ref) ? x.ref : '' })));
-  const t = raw.timer;
-  S.timer = t && tid.has(t.id) ? { id: t.id, run: !!t.run, at: num(t.at, 'timer at'), acc: num(t.acc, 'timer acc', 0), ...(t.pomo ? { pomo: num(t.pomo, 'pomo', 1, 180) } : {}) } : null;
+  S.timers = {}; delete S.timer;
+  const put = (key, t) => { if (!t || typeof t !== 'object' || !tid.has(key)) return; S.timers[key] = { run: !!t.run, at: num(t.at, 'timer at'), acc: num(t.acc, 'timer acc', 0), ...(t.pomo ? { pomo: num(t.pomo, 'pomo', 1, 180) } : {}) }; };
+  if (raw.timers && typeof raw.timers === 'object' && !Array.isArray(raw.timers)) for (const [key, t] of Object.entries(raw.timers).slice(0, 100)) put(key, t);
+  if (raw.timer && typeof raw.timer === 'object' && !S.timers[raw.timer.id]) put(raw.timer.id, raw.timer); // data saved by older versions had a single timer
   return S;
 }
 export function parseImport(text) { let raw; try { raw = JSON.parse(text); } catch { bad('not valid JSON'); } return migrate(raw); }
@@ -618,7 +622,7 @@ export function toCsv(S) {
 export const sched = (h) => h.type === 'daily' ? 'Daily' : h.type === 'weekly' ? `${h.n} days / week` : h.type === 'every' ? `Every ${h.every} days` : h.type === 'monthly' ? `${h.n} / month` : h.days.map((i) => WD[i]).join(', ');
 
 /* ---------- notification planner (pure; the plugin layer only applies the plan) ---------- */
-export const NOTIF = { DAILY: 1001, TIMER: 1003, POMO: 1004, RISK: 2000, DUE: 100000 };
+export const NOTIF = { DAILY: 1001, RISK: 2000, DUE: 100000, TIMER_BASE: 3000000, POMO_BASE: 4000000 };
 export const TIMER_LONG_MS = 3 * 3600 * 1000, RISK_HOUR = 18, DUE_LEAD_MIN = 60, DUE_DEFAULT_HOUR = 9;
 const hash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) % 1e6; };
 const at = (d, hh, mm = 0) => { const x = P(d); x.setHours(hh, mm, 0, 0); return x.getTime(); };
@@ -637,13 +641,13 @@ export function planNotifications(S) {
     const items = S.tasks.filter((k) => isOpen(k) && k.due).map((k) => ({ k, when: k.time ? at(k.due, ...k.time.split(':').map(Number)) - DUE_LEAD_MIN * 60000 : at(k.due, DUE_DEFAULT_HOUR) })).filter((x) => x.when > now).sort((a, b) => a.when - b.when).slice(0, 40);
     for (const { k, when } of items) plan.push({ id: NOTIF.DUE + hash(k.id), kind: 'due', title: 'Task due soon', body: `${k.title} is due ${k.time ? 'at ' + k.time : 'today'}.`, act: 'TASK', ref: k.id, at: when });
   }
-  if (n.timer && S.timer?.run) {
-    const k = S.tasks.find((x) => x.id === S.timer.id), el = k ? elapsed(S, k) * 1000 : 0;
-    if (k && el < TIMER_LONG_MS) plan.push({ id: NOTIF.TIMER, kind: 'timer', title: 'Timer still running', body: `The timer for "${k.title}" has been running for 3 hours.`, at: now + (TIMER_LONG_MS - el) });
-  }
-  if (n.timer && S.timer?.run && S.timer.pomo) {
-    const k = S.tasks.find((x) => x.id === S.timer.id), f = S.timer.pomo * 60, el = k ? elapsed(S, k) : 0;
-    if (k) plan.push({ id: NOTIF.POMO, kind: 'pomo', title: 'Focus block done 🍅', body: `Take a short break from "${k.title}".`, at: now + Math.max(1, (f - (el % f))) * 1000 });
+  if (n.timer) { // one "still running" and one pomodoro alert per running timer (ids made unique even on hash collisions)
+    const used = new Set(plan.map((p) => p.id)), pick = (base, key) => { let i = base + hash(key); while (used.has(i)) i++; used.add(i); return i; };
+    for (const k of S.tasks.filter((x) => S.timers?.[x.id]?.run).slice(0, 12)) {
+      const tm = S.timers[k.id], el = elapsed(S, k) * 1000;
+      if (el < TIMER_LONG_MS) plan.push({ id: pick(NOTIF.TIMER_BASE, 'l' + k.id), kind: 'timer', title: 'Timer still running', body: `The timer for "${k.title}" has been running for 3 hours.`, at: now + (TIMER_LONG_MS - el) });
+      if (tm.pomo) { const f = tm.pomo * 60; plan.push({ id: pick(NOTIF.POMO_BASE, 'p' + k.id), kind: 'pomo', title: 'Focus block done 🍅', body: `Take a short break from "${k.title}".`, at: now + Math.max(1, f - (el / 1000 % f)) * 1000 }); }
+    }
   }
   for (const x of S.snz || []) if (x.at > now) plan.push({ id: x.id, kind: x.kind || 'snooze', title: x.title, body: x.body, act: x.ref ? 'TASK' : 'REMIND', ref: x.ref || undefined, at: x.at });
   return plan;
