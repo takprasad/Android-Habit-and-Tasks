@@ -23,3 +23,7 @@ recurring tasks, steps, freezes, quick add, calendar, pomodoro, undo, and the re
 
 Tests: `node tests/logic.features.test.mjs` (31) · `node tests/storage.test.mjs` (11) · `python3 tests/e2e_ui.py`
 (playwright; serve app/src/main/assets/public on :8765; checks the fixed frames, pill on every page, and two simultaneous timers).
+
+## Fix: notifications settings screen + restore
+- Reminders are now scheduled with `isExactNotification: false`, so Android never opens the "Alarms and reminders" screen when you turn notifications on. Reminders may arrive a few minutes late.
+- Restore: the file picker no longer filters by type (Drive files were greyed out), the file is read before the picker is reset, a leading BOM is tolerated, and errors now say what is wrong.

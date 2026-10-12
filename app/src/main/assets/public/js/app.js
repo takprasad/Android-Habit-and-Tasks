@@ -449,7 +449,7 @@ function backupCard() {
   return `<p class=mu style="margin-top:0">Save a copy of all your data to a folder in your own Google Drive and bring it back whenever you need it. You pick the folder yourself, right on this phone.</p>
   <p class=mu style="margin:0 0 12px">Last backup sent: <b class="${stale ? 'am' : ''}">${when}</b>${stale ? ' · a weekly backup is a good habit' : ''}</p>
   <button class=btn data-a=bk style="margin-bottom:10px">Back up now</button>
-  <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept=".json,application/json" id=imp hidden></label>
+  <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept="*/*" id=imp hidden></label>
   <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
 }
 function vSettings() {
@@ -503,10 +503,16 @@ async function applyImport(ns, label) {
   S = ns; L.evaluate(S); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); save(); render();
   toast('Data restored', () => { S = prev; theme(); save(); render(); });
 }
-async function importFile(file) {
+const readFile = (file) => new Promise((res, rej) => {
+  const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.onerror = () => rej(fr.error || new Error('read failed')); fr.readAsText(file);
+});
+async function importFile(file, done) {
   if (!file) return;
-  if (file.size > 50e6) return toast('File too large – nothing was changed');
-  let ns; try { ns = L.parseImport(await file.text()); } catch { return toast('Invalid file – nothing was changed'); }
+  let text;
+  try { text = await readFile(file); } catch (e) { done?.(); return toast('Could not read that file: ' + (e?.message || 'unknown error')); }
+  done?.(); // safe to reset the picker now that the text is in memory
+  if (text.length > 50e6) return toast('File too large – nothing was changed');
+  let ns; try { ns = L.parseImport(text); } catch (e) { return toast('Not a valid backup (' + String(e?.message || e).replace(/^Invalid data: /, '') + ') – nothing was changed'); }
   await applyImport(ns, 'this backup file');
 }
 function openHabitSheet(kind, id) { histLimit = 50; historySheet(kind, id); }
@@ -621,7 +627,7 @@ document.addEventListener('change', async (e) => {
   }
   if (N[n]) { S.settings.notif[N[n]] = t.checked; save(); }
   if (n === 'nTime' && /^\d{2}:\d{2}$/.test(t.value)) { S.settings.notif.dailyTime = t.value; save(); }
-  if (t.id === 'imp') { const f = t.files[0]; t.value = ''; importFile(f); }
+  if (t.id === 'imp') { const f = t.files[0]; if (f) importFile(f, () => { t.value = ''; }); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') sheet();

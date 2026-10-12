@@ -74,7 +74,7 @@ export function applyPlan(plan, enabled) {
     if (!enabled || !plan.length || (await notifPermission(false)) !== 'granted') return;
     await registerActions();
     await LN.createChannel({ id: CH, name: 'Reminders', description: 'Habit and task reminders', importance: 3 });
-    await LN.schedule({ notifications: plan.map((n) => ({ id: n.id, title: n.title, body: n.body, channelId: CH, ...(n.act ? { actionTypeId: n.act } : {}), extra: { kind: n.kind || '', ref: n.ref || '' }, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', schedule: n.repeat ? { on: n.repeat, allowWhileIdle: true } : { at: new Date(n.at), allowWhileIdle: true } })) });
+    await LN.schedule({ notifications: plan.map((n) => ({ id: n.id, title: n.title, body: n.body, channelId: CH, ...(n.act ? { actionTypeId: n.act } : {}), extra: { kind: n.kind || '', ref: n.ref || '' }, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', isExactNotification: false, schedule: n.repeat ? { on: n.repeat, allowWhileIdle: true } : { at: new Date(n.at), allowWhileIdle: true } })) });
   }));
   return q;
 }
@@ -84,6 +84,6 @@ export function notifyNow(id, title, body) {
   q = q.then(() => safe(async () => {
     if ((await notifPermission(false)) !== 'granted') return;
     await LN.createChannel({ id: CH, name: 'Reminders', description: 'Habit and task reminders', importance: 3 });
-    await LN.schedule({ notifications: [{ id, title, body, channelId: CH, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', schedule: { at: new Date(Date.now() + 700) } }] });
+    await LN.schedule({ notifications: [{ id, title, body, channelId: CH, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', isExactNotification: false, schedule: { at: new Date(Date.now() + 700), allowWhileIdle: true } }] });
   }));
 }

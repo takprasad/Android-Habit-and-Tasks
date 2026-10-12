@@ -602,7 +602,7 @@ export function migrate(raw) {
   if (raw.timer && typeof raw.timer === 'object' && !S.timers[raw.timer.id]) put(raw.timer.id, raw.timer); // data saved by older versions had a single timer
   return S;
 }
-export function parseImport(text) { let raw; try { raw = JSON.parse(text); } catch { bad('not valid JSON'); } return migrate(raw); }
+export function parseImport(text) { text = String(text ?? '').replace(/^\uFEFF/, '').trim(); if (!text) bad('the file is empty'); let raw; try { raw = JSON.parse(text); } catch { bad('not valid JSON'); } return migrate(raw); }
 
 /* ---------- CSV export ---------- */
 const FORMULA = /^[=+\-@\t\r]/;
