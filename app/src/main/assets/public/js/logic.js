@@ -577,7 +577,7 @@ export function migrate(raw) {
     if (!k || typeof k !== 'object') bad('task');
     const ms = k.ms || {}, kk = {
       id: id(k.id, 'task'), title: str(k.title, 'task title', 500), pri: oneOf(k.pri ?? 'Medium', ['High', 'Medium', 'Low'], 'priority'), cat: optStr(k.cat, 'cat', 40) || 'Personal',
-      due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')),
+      due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')), timeTo: k.timeTo == null ? null : (TIME.test(k.timeTo) ? k.timeTo : null), reminder: !!k.reminder,
       status: oneOf(k.status ?? 'Not Started', ['Not Started', 'In Progress', 'Completed', 'Cancelled', 'Archived'], 'status'),
       start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)), bonusCoins: opt(k.bonusCoins, 0, (v) => num(v, 'bonusCoins', 0)), netPenaltyApplied: opt(k.netPenaltyApplied, 0, (v) => num(v, 'netPenaltyApplied', 0)),
       ms: { mode: oneOf(ms.mode ?? 'once', ['once', 'worklog'], 'ms.mode'), every: opt(ms.every, 5, (v) => num(v, 'every', 0.25, 1e4)), after: oneOf(ms.after ?? 'reset', ['reset', 'carry', 'add'], 'ms.after'), reward: optStr(ms.reward, 'reward', 200), url: optStr(ms.url, 'url') },

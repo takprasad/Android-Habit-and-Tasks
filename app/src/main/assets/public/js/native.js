@@ -13,6 +13,7 @@ const App = plug('App'), Browser = plug('Browser'), StatusBar = plug('StatusBar'
 const LN = plug('LocalNotifications'), Share = plug('Share'), FS = plug('Filesystem');
 const safe = async (f) => { try { return await f(); } catch (e) { console.warn('[native]', e?.message || e); return undefined; } };
 
+export async function updateWidget() {}
 export async function onBack(handler) { if (App) await App.addListener('backButton', () => { if (!handler()) App.exitApp(); }); }
 export async function onAppState(cb) { if (App) { await App.addListener('appStateChange', (s) => cb(s.isActive)); await App.addListener('pause', () => cb(false)); await App.addListener('resume', () => cb(true)); } }
 export async function hideSplash() { if (Splash) await safe(() => Splash.hide()); }

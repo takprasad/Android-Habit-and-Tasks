@@ -35,7 +35,15 @@ let histLimit = 50;
 
 let syncT;
 const sync = () => { clearTimeout(syncT); syncT = setTimeout(() => nat.applyPlan(L.planNotifications(S), S.settings.notif.on), 1500); };
-const save = () => { store.save(); sync(); };
+const save = () => {
+  store.save();
+  sync();
+  if (S) {
+    const d = L.dashboard(S);
+    store.kvSet('widget_data', JSON.stringify({ done: d.doneHabits, total: d.habits.length, date: today() }));
+  }
+  nat.updateWidget?.();
+};
 
 /* ---------- engine hooks ---------- */
 let celebrated = false, pendingUndo = null;
@@ -105,12 +113,14 @@ function habitStripItem(h) {
 const hud = () => { const li = L.levelInfo(S); return `<button class="coin-pill hud" data-a=lvinfo aria-label="Level ${li.lv}, ${S.coins || 0} coins. How levels work">Lv ${li.lv} · 🪙 ${S.coins || 0}</button>`; };
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
-  const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
+  const timeStr = k.time ? (k.timeTo ? `${k.time} - ${k.timeTo}` : k.time) : '';
+  const remStr = k.reminder ? ' 🔔' : '';
+  const dm = k.due === t ? (od ? 'Overdue' + (timeStr ? ' ' + timeStr : '') : 'Due today' + (timeStr ? ' ' + timeStr : '')) : k.due ? (od ? 'Overdue' : 'Due ' + k.due + (timeStr ? ' ' + timeStr : '')) : 'No deadline';
   const bonusTag = k.bonusCoins > 0 ? ` · +🪙 ${k.bonusCoins}` : '';
   const isDone = k.status === 'Completed', [sd, sn] = L.subProg(k);
   const extra = (k.rec ? ' · 🔁' : '') + (sn ? ` · ☑ ${sd}/${sn}` : ''), tg = (k.tags || []).length ? `<div class=tags>${k.tags.map((x) => `<span class=tag>#${esc(x)}</span>`).join('')}</div>` : '';
   return `<div class=row style="padding:5px 0"><button class="chk ${isDone ? 'done' : ''}" data-a=tc data-id=${k.id} ${isDone ? 'disabled' : ''} aria-label="${isDone ? 'Completed' : 'Complete'} ${esc(k.title)}">${isDone ? '✓' : ''}</button>
-  <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span>${bonusTag}${extra} · ${dm}${k.time && !(od && k.due === t) ? ' ' + k.time : ''}${od ? ' ⚠' : ''}</div>${tg}</div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
+  <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span>${bonusTag}${extra}${remStr} · ${dm}${od ? ' ⚠' : ''}</div>${tg}</div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
 }
 
 /* ---------- views ---------- */
@@ -335,8 +345,9 @@ function fTask(k, preset) {
   const e = !!k, ms = k?.ms || {}, after = { reset: 'Reset to 0', carry: 'Carry over', add: 'Keep adding' }[ms.after] || 'Carry over', rec = k?.rec, rl = rec ? { day: 'Days', week: 'Weeks', month: 'Months' }[rec.u] : 'None';
   sheet(`<div class="row sp"><h2 class=num>${e ? 'Edit task' : 'New task'}</h2>${closeBtn}</div>
  ${fld('Title', `<input type=text name=title maxlength=100 value="${esc(k?.title || '')}">`)}<div class=lbl>Priority</div>${seg('pri', ['High', 'Medium', 'Low'], k?.pri || 'Medium')}
- <div class=row>${fld('Due date (optional)', `<input type=date name=due value="${k?.due || preset?.due || ''}">`)}${fld('Time (optional)', `<input type=time name=time value="${k?.time || ''}">`)}</div>
- <div class=chips style="margin:-6px 0 12px">${[['0', 'Today'], ['1', 'Tomorrow'], ['7', 'Next week'], ['x', 'No date']].map(([v, n]) => `<button type=button class=chip data-a=qd data-id=${v}>${n}</button>`).join('')}</div>
+ <div class=row>${fld('Due date (optional)', `<input type=date name=due value="${k?.due || preset?.due || ''}">`)}${fld('From time', `<input type=time name=time value="${k?.time || ''}">`)}${fld('To time', `<input type=time name=timeTo value="${k?.timeTo || ''}">`)}</div>
+ <label class=chip style="margin:-2px 0 10px"><input type=checkbox name=reminder ${k?.reminder ? 'checked' : ''}>🔔 Set reminder</label>
+ <div class=chips style="margin:-2px 0 12px">${[['0', 'Today'], ['1', 'Tomorrow'], ['7', 'Next week'], ['x', 'No date']].map(([v, n]) => `<button type=button class=chip data-a=qd data-id=${v}>${n}</button>`).join('')}</div>
  ${fld('Category', `<select name=cat>${L.allCats(S).map((c) => `<option value="${esc(c)}" ${(k ? k.cat === c : c === 'Personal') ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select><input type=text name=newcat maxlength=24 placeholder="Or create a new category" aria-label="New category" style="margin-top:8px">`)}
  <details class=more ${(k && (k.tags?.length || k.est || k.rec || k.bonusCoins || ms.mode === 'worklog' || ms.reward || ms.url)) ? 'open' : ''}><summary>More options · tags, repeat, estimate, rewards</summary>
  ${fld('Tags (comma separated)', `<input type=text name=tags maxlength=120 placeholder="home, errands" value="${esc((k?.tags || []).join(', '))}">`)}
@@ -365,7 +376,7 @@ function saveReward() {
 }
 function mkTask(f, ms) {
   const id = L.uid();
-  return { id, title: f.title, pri: f.pri || 'Medium', cat: f.cat || 'Personal', due: f.due || null, time: f.time || null, bonusCoins: f.bonusCoins || 0, tags: f.tags || [], est: f.est || 0, rec: f.rec || null, ...(f.rec ? { ser: id } : {}),
+  return { id, title: f.title, pri: f.pri || 'Medium', cat: f.cat || 'Personal', due: f.due || null, time: f.time || null, timeTo: f.timeTo || null, reminder: !!f.reminder, bonusCoins: f.bonusCoins || 0, tags: f.tags || [], est: f.est || 0, rec: f.rec || null, ...(f.rec ? { ser: id } : {}),
     status: 'Not Started', start: today(), mp: 0, fired: 0, sub: [], ms: ms || { mode: 'once', every: 5, after: 'reset', reward: '', url: '' } };
 }
 function saveTask(id) {
@@ -374,7 +385,7 @@ function saveTask(id) {
   const wl = val('mode') === 'Every work log', due = val('due') || null, ru = { Days: 'day', Weeks: 'week', Months: 'month' }[val('rep')];
   if (ru && !due) return toast('Repeating tasks need a due date');
   const rec = ru ? { u: ru, n: Math.min(365, Math.max(1, Math.round(+val('rn')) || 1)), days: ru === 'week' ? [...document.querySelectorAll('#sheet [name=rday]:checked')].map((i) => +i.value).sort() : [], dom: ru === 'month' ? +due.slice(8) : 0 } : null;
-  const fields = { title, pri: val('pri'), cat, due, time: due ? val('time') || null : null, bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
+  const fields = { title, pri: val('pri'), cat, due, time: due ? val('time') || null : null, timeTo: due ? val('timeTo') || null : null, reminder: chk('reminder'), bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
   const ms = { mode: wl ? 'worklog' : 'once', every: Math.max(0.25, +val('every') || 5), after: val('after') === 'Keep adding' ? 'add' : val('after') === 'Carry over' ? 'carry' : 'reset', reward: val('reward').trim(), url };
   const k = id && S.tasks.find((x) => x.id === id);
   if (k) {
@@ -390,9 +401,11 @@ function taskDetail(id) {
   const k = S.tasks.find((x) => x.id === id); if (!k) return; view = { task: id }; tab = 'task';
   const rn = run(k), paused = rn && !S.timers[id].run, ses = S.sessions.filter((s) => s.t === id).sort((a, b) => a.start - b.start);
   const ev = L.everySec(k), [sd, sn] = L.subProg(k), wsec = L.worked(S, k) + el(k);
+  const timeStr = k.time ? (k.timeTo ? `${k.time} - ${k.timeTo}` : k.time) : '';
+  const remStr = k.reminder ? ' 🔔 Remind me' : '';
   $('#tabs').hidden = true;
   lastTab = 'task'; setApp(`<div class=row><button class=ic data-a=back aria-label=Back>←</button><h1 class=grow style="font-size:24px;margin:0">${esc(k.title)}</h1>${hud()}</div>
-  <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (k.time ? ' ' + k.time : '') : 'No deadline'} · ${k.status}${k.rec ? ' · 🔁 ' + L.recLabel(k.rec) : ''}</p>
+  <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (timeStr ? ' ' + timeStr : '') : 'No deadline'}${remStr ? ' · ' + remStr : ''} · ${k.status}${k.rec ? ' · 🔁 ' + L.recLabel(k.rec) : ''}</p>
   ${(k.tags || []).length ? `<p class=mu style="margin-top:-8px">${k.tags.map((x) => '#' + esc(x)).join(' ')}</p>` : ''}
   <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div>${rn && S.timers[id].pomo ? `<div class=mu style="text-align:center;margin-bottom:8px" data-pomo=${id}>${pomoText(k)}</div>` : ''}<div class=row>
   ${k.status === 'Completed' ? '' : rn && S.timers[id].run ? `<button class="btn out" data-a=pause data-id=${id}>Pause</button><button class=btn data-a=stop data-id=${id}>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume data-id=${id}>Resume</button><button class="btn out" data-a=stop data-id=${id}>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button><button class="btn out" data-a=startp data-id=${id}>🍅 Focus</button>`}</div></div>
@@ -450,7 +463,8 @@ function backupCard() {
   <p class=mu style="margin:0 0 12px">Last backup sent: <b class="${stale ? 'am' : ''}">${when}</b>${stale ? ' · a weekly backup is a good habit' : ''}</p>
   <button class=btn data-a=bk style="margin-bottom:10px">Back up now</button>
   <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept="*/*" id=imp hidden></label>
-  <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
+  <button class="btn out" data-a=pasterestore style="margin-bottom:10px">Paste backup JSON to restore</button>
+  <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file, or use <b>Paste backup JSON</b> for instant recovery. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
 }
 function vSettings() {
   const n = S.settings.notif, days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -523,6 +537,8 @@ let lastTimerAct = -1e9;
 const timerBusy = () => { const n = performance.now(), busy = n - lastTimerAct < 600; if (!busy) lastTimerAct = n; return busy; };
 const A = {
   nr: () => fReward(), sr: () => saveReward(),
+  pasterestore: () => sheet(`<div class="row sp"><h2 class=num>Restore from JSON</h2>${closeBtn}</div><p class=mu>Paste your backup JSON text below to restore your data instantly.</p>${fld('Backup JSON content', '<textarea name=rawjson rows=8 placeholder="Paste JSON here..." style="width:100%;font-family:monospace;font-size:12px;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px"></textarea>')}<button class=btn data-a=dorestore>Restore data</button>`),
+  dorestore: async () => { const raw = document.querySelector('#sheet [name=rawjson]')?.value?.trim(); if (!raw) return toast('Please paste backup JSON'); try { const ns = L.parseImport(raw); await applyImport(ns, 'pasted backup text'); } catch (e) { toast('Invalid backup JSON: ' + (e?.message || e)); } },
   claimr: ({ id }) => { const r = byId('rewards', id); if (L.claimReward(S, r)) { save(); render(); toast(`Claimed "${r.name}" for 🪙 ${r.cost || 10}!`); } else { toast(`Not enough Supercoins! Need 🪙 ${r.cost || 10}`); } },
   tab: ({ id, e }) => { e.preventDefault(); tab = id; view = null; $('#tabs').hidden = false; render(); },
   x: () => sheet(), set: () => { tab = 'settings'; view = null; render(); }, nh: ({ e }) => { e.preventDefault(); fHabit(); }, nt: ({ e }) => { e.preventDefault(); fTask(undefined, tab === 'tasks' && tview === 'cal' && calSel ? { due: calSel } : undefined); },
