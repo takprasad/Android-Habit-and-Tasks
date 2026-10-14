@@ -137,7 +137,7 @@ public class HabitWidgetProvider extends AppWidgetProvider {
                 }
             }
 
-            // 2. Fallback to parsing packed ht2_a / ht2_b slots if widget_data is missing/stale
+            // 2. Fallback to parsing packed ht2_a / ht2_b slots
             if (doneCount < 0) {
                 String rawA = prefs.getString("ht2_a", "");
                 String rawB = prefs.getString("ht2_b", "");
@@ -181,20 +181,6 @@ public class HabitWidgetProvider extends AppWidgetProvider {
         if (totalCount < 0) totalCount = 0;
 
         String ratioText = doneCount + "/" + totalCount;
-        String statusText;
-
-        double ratio = totalCount > 0 ? (double) doneCount / totalCount : 0;
-        if (totalCount == 0) {
-            statusText = "No habits today";
-        } else if (ratio == 1.0) {
-            statusText = "🎉 All Done!";
-        } else if (ratio >= 0.5) {
-            statusText = "🔥 Over Halfway!";
-        } else if (ratio > 0) {
-            statusText = "⚡ On Your Way!";
-        } else {
-            statusText = "😴 Time to Start!";
-        }
 
         StringBuilder emojiBar = new StringBuilder();
         int maxShow = Math.min(totalCount, 8);
@@ -207,8 +193,7 @@ public class HabitWidgetProvider extends AppWidgetProvider {
         }
 
         views.setTextViewText(R.id.widget_fraction, ratioText);
-        views.setTextViewText(R.id.widget_status, statusText);
-        views.setTextViewText(R.id.widget_emojis, emojiBar.length() > 0 ? emojiBar.toString().trim() : "⚪ ⚪ ⚪");
+        views.setTextViewText(R.id.widget_emojis, emojiBar.length() > 0 ? emojiBar.toString().trim() : "🟢 🟢 🟢");
 
         appWidgetManager.updateAppWidget(appWidgetId, views);
     }

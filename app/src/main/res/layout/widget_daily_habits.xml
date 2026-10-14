@@ -8,57 +8,26 @@
     android:background="@drawable/widget_bg"
     android:gravity="center">
 
-    <TextView
-        android:id="@+id/widget_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="DAILY HABITS"
-        android:textColor="#9EAEA6"
-        android:textSize="10sp"
-        android:textStyle="bold"
-        android:letterSpacing="0.08" />
-
     <!-- Big Centered Emojis -->
     <TextView
         android:id="@+id/widget_emojis"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="🟢 🟢 🟢"
-        android:textSize="28sp"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:text="🟢 🟢 🟢 🟢"
+        android:textSize="26sp"
         android:gravity="center"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="8dp" />
+        android:includeFontPadding="false" />
 
-    <!-- Counter & Status at Bottom -->
-    <LinearLayout
+    <!-- Counter at Bottom Center -->
+    <TextView
+        android:id="@+id/widget_fraction"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center">
-
-        <TextView
-            android:id="@+id/widget_fraction"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="0/0"
-            android:textColor="#E2ECE6"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text=" · "
-            android:textColor="#9EAEA6"
-            android:textSize="15sp" />
-
-        <TextView
-            android:id="@+id/widget_status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Time to Start!"
-            android:textColor="#26A69A"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+        android:text="0/4"
+        android:textColor="#E2ECE6"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="4dp" />
 </LinearLayout>
