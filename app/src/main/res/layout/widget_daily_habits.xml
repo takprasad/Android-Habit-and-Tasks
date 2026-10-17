@@ -8,14 +8,14 @@
     android:background="@drawable/widget_bg"
     android:gravity="center">
 
-    <!-- Big Centered Emojis -->
+    <!-- Single Central Mood Emoji based on completion % -->
     <TextView
         android:id="@+id/widget_emojis"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:text="🟢 🟢 🟢 🟢"
-        android:textSize="26sp"
+        android:text="😭"
+        android:textSize="52sp"
         android:gravity="center"
         android:includeFontPadding="false" />
 

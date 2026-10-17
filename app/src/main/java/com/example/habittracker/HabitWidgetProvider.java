@@ -182,18 +182,26 @@ public class HabitWidgetProvider extends AppWidgetProvider {
 
         String ratioText = doneCount + "/" + totalCount;
 
-        StringBuilder emojiBar = new StringBuilder();
-        int maxShow = Math.min(totalCount, 8);
-        for (int i = 0; i < maxShow; i++) {
-            if (i < doneCount) {
-                emojiBar.append("✅ ");
-            } else {
-                emojiBar.append("🟢 ");
-            }
+        double ratio = totalCount > 0 ? (double) doneCount / totalCount : 0;
+        String centralEmoji;
+        if (totalCount == 0) {
+            centralEmoji = "😴";
+        } else if (ratio >= 1.0) {
+            centralEmoji = "🤩"; // 100% -> bright smiley / celebrating
+        } else if (ratio >= 0.75) {
+            centralEmoji = "😄"; // happy
+        } else if (ratio >= 0.5) {
+            centralEmoji = "🙂"; // neutral / getting there
+        } else if (ratio >= 0.25) {
+            centralEmoji = "😕"; // a bit sad
+        } else if (ratio > 0) {
+            centralEmoji = "😢"; // sad
+        } else {
+            centralEmoji = "😭"; // 0% -> very sad
         }
 
         views.setTextViewText(R.id.widget_fraction, ratioText);
-        views.setTextViewText(R.id.widget_emojis, emojiBar.length() > 0 ? emojiBar.toString().trim() : "🟢 🟢 🟢");
+        views.setTextViewText(R.id.widget_emojis, centralEmoji);
 
         appWidgetManager.updateAppWidget(appWidgetId, views);
     }
