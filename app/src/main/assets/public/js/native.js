@@ -11,9 +11,9 @@ const plug = (n) => {
 };
 const App = plug('App'), Browser = plug('Browser'), StatusBar = plug('StatusBar'), SystemBars = plug('SystemBars'), Splash = plug('SplashScreen');
 const LN = plug('LocalNotifications'), Share = plug('Share'), FS = plug('Filesystem');
+const Blocker = isNative ? plug('AppBlocker') : (globalThis.__fakeBlocker || null); // __fakeBlocker: test hook, never set in the real app
 const safe = async (f) => { try { return await f(); } catch (e) { console.warn('[native]', e?.message || e); return undefined; } };
 
-export async function updateWidget() {}
 export async function onBack(handler) { if (App) await App.addListener('backButton', () => { if (!handler()) App.exitApp(); }); }
 export async function onAppState(cb) { if (App) { await App.addListener('appStateChange', (s) => cb(s.isActive)); await App.addListener('pause', () => cb(false)); await App.addListener('resume', () => cb(true)); } }
 export async function hideSplash() { if (Splash) await safe(() => Splash.hide()); }
@@ -38,6 +38,13 @@ export async function exportFile(name, mime, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   return true;
 }
+
+/* ---- app blocker (Android accessibility service, see AppBlockerPlugin.java) ---- */
+export const blockerAvailable = !!Blocker;
+export const blockerStatus = async () => (await safe(() => Blocker.status())) || { enabled: false };
+export const blockerApps = async () => (await safe(() => Blocker.listApps()))?.apps || [];
+export const blockerOpenSettings = () => safe(() => Blocker.openSettings());
+export const blockerSetRules = (rules) => safe(() => Blocker.setRules({ rules }));
 
 /** Share plain text: share sheet on Android, Web Share / clipboard in a browser. */
 export async function shareText(title, text) {
@@ -75,7 +82,7 @@ export function applyPlan(plan, enabled) {
     if (!enabled || !plan.length || (await notifPermission(false)) !== 'granted') return;
     await registerActions();
     await LN.createChannel({ id: CH, name: 'Reminders', description: 'Habit and task reminders', importance: 3 });
-    await LN.schedule({ notifications: plan.map((n) => ({ id: n.id, title: n.title, body: n.body, channelId: CH, ...(n.act ? { actionTypeId: n.act } : {}), extra: { kind: n.kind || '', ref: n.ref || '' }, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', isExactNotification: false, schedule: n.repeat ? { on: n.repeat, allowWhileIdle: true } : { at: new Date(n.at), allowWhileIdle: true } })) });
+    await LN.schedule({ notifications: plan.map((n) => ({ id: n.id, title: n.title, body: n.body, channelId: CH, ...(n.act ? { actionTypeId: n.act } : {}), extra: { kind: n.kind || '', ref: n.ref || '' }, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', schedule: n.repeat ? { on: n.repeat, allowWhileIdle: true } : { at: new Date(n.at), allowWhileIdle: true } })) });
   }));
   return q;
 }
@@ -85,6 +92,6 @@ export function notifyNow(id, title, body) {
   q = q.then(() => safe(async () => {
     if ((await notifPermission(false)) !== 'granted') return;
     await LN.createChannel({ id: CH, name: 'Reminders', description: 'Habit and task reminders', importance: 3 });
-    await LN.schedule({ notifications: [{ id, title, body, channelId: CH, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', isExactNotification: false, schedule: { at: new Date(Date.now() + 700), allowWhileIdle: true } }] });
+    await LN.schedule({ notifications: [{ id, title, body, channelId: CH, smallIcon: 'ic_stat_habit', iconColor: '#0F6B5C', schedule: { at: new Date(Date.now() + 700) } }] });
   }));
 }

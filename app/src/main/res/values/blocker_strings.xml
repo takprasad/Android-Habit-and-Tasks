@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="blocker_service_label">Habit &amp; Task Tracker · App blocker</string>
+    <string name="blocker_service_description">Notices which app you open so Habit &amp; Task Tracker can block the apps you chose until your habits and tasks for the day are done. It does not read anything on your screen.</string>
+</resources>

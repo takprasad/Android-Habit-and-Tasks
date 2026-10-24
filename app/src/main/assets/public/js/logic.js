@@ -42,7 +42,7 @@ export const defaultSettings = () => ({
   notif: { on: false, daily: true, dailyTime: '20:00', risk: true, due: true, timer: true, reward: true },
 });
 export const DEFAULT_CATS = ['Health', 'Work', 'Learning', 'Home', 'Personal'];
-export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timers: {}, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [], cats: [], coinFrac: 0 });
+export const newState = () => ({ v: 2, coins: 0, habits: [], checkins: [], tasks: [], sessions: [], rewards: [], timers: {}, theme: 'system', audit: [], settings: defaultSettings(), freezes: 0, earned: 0, snz: [], cats: [], coinFrac: 0, blocks: [] });
 export const log = (S, type, id, p) => { S.audit.push({ type, id, p, at: clock.now().getTime() }); };
 
 /* ---------- habit engine ---------- */
@@ -242,6 +242,42 @@ export function complete(S, k) {
   const nx = spawnNext(S, k), tail = nx ? ` Next one is due ${nx.due}.` : '';
   if (k.ms.mode === 'once' && k.ms.reward && !k.once) { k.once = 1; unlockT(S, k, `🎉 Milestone reached! Earned 🪙 ${earned} Supercoins!${tail}`); }
   else { hooks.celebrate(`🎉 Task completed! Earned 🪙 ${earned} Supercoins.${tail}`); }
+}
+
+/* ---------- app blocker ----------
+ * A rule blocks one Android app until the chosen habits / tasks are done for the day.
+ * The phone side (accessibility service) only needs, per app, "unlocked until <time>" and what is still to do;
+ * unlocking therefore expires on its own at midnight even if this app is not running. */
+export const BLOCK_MAX = 20;
+/** Is this habit "done for today"? Habits that are not due today (or paused / archived / not started) never block. */
+export function habitReqMet(S, h, t = today()) {
+  if (!h || h.archived || h.paused || h.start > t) return true;
+  if (!isScheduled(h, t)) return true;
+  if (hDays(S, h).has(t)) return true;
+  if (h.type === 'daily') return false;
+  return done(S, h, period(S, h, t)) >= req(h); // X per week / every N days / N per month: this period's goal may already be met
+}
+/** One-off task: done once completed. Recurring task: done if an instance was completed today, or the next one is not due yet. A deleted task never blocks. */
+export function taskReqMet(S, id, t = today()) {
+  const k = S.tasks.find((x) => x.id === id); if (!k) return true;
+  if (!k.rec && !k.ser) return k.status === 'Completed';
+  const inst = S.tasks.filter((x) => (x.ser || x.id) === (k.ser || k.id));
+  if (inst.some((x) => x.status === 'Completed' && x.doneAt && D(new Date(x.doneAt)) === t)) return true;
+  return !inst.some((x) => isOpen(x) && (!x.due || x.due <= t));
+}
+export function blockStatus(S, b, t = today()) {
+  const items = b.items.map((it) => {
+    if (it.t === 'habit') { const h = S.habits.find((x) => x.id === it.id); return { ...it, name: h ? h.name : 'a deleted habit', met: habitReqMet(S, h, t) }; }
+    const k = S.tasks.find((x) => x.id === it.id); return { ...it, name: k ? k.title : 'a deleted task', met: taskReqMet(S, it.id, t) };
+  });
+  const unlocked = b.mode === 'any' ? items.some((i) => i.met) : items.every((i) => i.met);
+  return { unlocked, items, pending: items.filter((i) => !i.met).map((i) => i.name) };
+}
+export const nextMidnight = () => { const n = clock.now(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1).getTime(); };
+/** What the Android side needs: unlocked rules carry an expiry (next local midnight), blocked ones carry 0 and the to-do list. */
+export function blockPayload(S) {
+  const until = nextMidnight();
+  return (S.blocks || []).map((b) => { const st = blockStatus(S, b); return { pkg: b.pkg, label: b.label, until: st.unlocked ? until : 0, any: b.mode === 'any', need: st.unlocked ? '' : st.pending.join('\n') }; });
 }
 
 /* ---------- categories ---------- */
@@ -545,6 +581,11 @@ export function migrate(raw) {
   S.coins = opt(raw.coins, 0, (v) => num(v, 'coins', 0));
   S.theme = oneOf(raw.theme ?? 'system', ['system', 'light', 'dark'], 'theme');
   S.freezes = opt(raw.freezes, 0, (v) => num(v, 'freezes', 0, 99));
+  S.blocks = opt(raw.blocks, [], (v) => arr(v, 'blocks').slice(0, BLOCK_MAX).map((b) => {
+    const pkg = str(b.pkg, 'app package', 200); if (!/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/.test(pkg)) throw new Error('Invalid app package name');
+    return { id: id(b.id, 'block'), pkg, label: str(b.label, 'app name', 80), mode: oneOf(b.mode ?? 'all', ['all', 'any'], 'block mode'),
+      items: arr(b.items, 'block items').slice(0, 30).map((i) => ({ t: oneOf(i.t, ['habit', 'task'], 'block item type'), id: id(i.id, 'block item') })) };
+  }));
   S.coinFrac = opt(raw.coinFrac, 0, (v) => num(v, 'coinFrac', 0, 1));
   S.cats = opt(raw.cats, [], (v) => [...new Set(arr(v, 'cats').slice(0, 30).map((x) => str(x, 'category', 40).trim()).filter(Boolean))]);
   const st = raw.settings || {}, ds = defaultSettings();
@@ -577,7 +618,7 @@ export function migrate(raw) {
     if (!k || typeof k !== 'object') bad('task');
     const ms = k.ms || {}, kk = {
       id: id(k.id, 'task'), title: str(k.title, 'task title', 500), pri: oneOf(k.pri ?? 'Medium', ['High', 'Medium', 'Low'], 'priority'), cat: optStr(k.cat, 'cat', 40) || 'Personal',
-      due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')), timeTo: k.timeTo == null ? null : (TIME.test(k.timeTo) ? k.timeTo : null), reminder: !!k.reminder,
+      due: k.due == null ? null : date(k.due, 'due'), time: k.time == null ? null : (TIME.test(k.time) ? k.time : bad('time')),
       status: oneOf(k.status ?? 'Not Started', ['Not Started', 'In Progress', 'Completed', 'Cancelled', 'Archived'], 'status'),
       start: opt(k.start, D(), (v) => date(v, 'start')), mp: opt(k.mp, 0, (v) => num(v, 'mp', 0)), fired: opt(k.fired, 0, (v) => num(v, 'fired', 0)), bonusCoins: opt(k.bonusCoins, 0, (v) => num(v, 'bonusCoins', 0)), netPenaltyApplied: opt(k.netPenaltyApplied, 0, (v) => num(v, 'netPenaltyApplied', 0)),
       ms: { mode: oneOf(ms.mode ?? 'once', ['once', 'worklog'], 'ms.mode'), every: opt(ms.every, 5, (v) => num(v, 'every', 0.25, 1e4)), after: oneOf(ms.after ?? 'reset', ['reset', 'carry', 'add'], 'ms.after'), reward: optStr(ms.reward, 'reward', 200), url: optStr(ms.url, 'url') },
@@ -602,7 +643,7 @@ export function migrate(raw) {
   if (raw.timer && typeof raw.timer === 'object' && !S.timers[raw.timer.id]) put(raw.timer.id, raw.timer); // data saved by older versions had a single timer
   return S;
 }
-export function parseImport(text) { text = String(text ?? '').replace(/^\uFEFF/, '').trim(); if (!text) bad('the file is empty'); let raw; try { raw = JSON.parse(text); } catch { bad('not valid JSON'); } return migrate(raw); }
+export function parseImport(text) { let raw; try { raw = JSON.parse(text); } catch { bad('not valid JSON'); } return migrate(raw); }
 
 /* ---------- CSV export ---------- */
 const FORMULA = /^[=+\-@\t\r]/;

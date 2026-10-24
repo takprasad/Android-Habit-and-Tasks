@@ -25,6 +25,7 @@ async function initApp() {
   theme(); L.evaluate(S); store.save(); lastOver = overSig(); render(); sync();
   if (bootNotice) toast(bootNotice);
   readyRes();
+  loadBlocker(); pushBlocks(true);
   store.kvGet('lastBackup').then((v) => { lastBackup = +v || 0; if (tab === 'settings') render(); }).catch(() => {});
   nat.hideSplash();
   if (new URLSearchParams(location.search).has('e2e')) window.__ht = { get S() { return S; }, L, store, back: handleBack };
@@ -35,15 +36,15 @@ let histLimit = 50;
 
 let syncT;
 const sync = () => { clearTimeout(syncT); syncT = setTimeout(() => nat.applyPlan(L.planNotifications(S), S.settings.notif.on), 1500); };
-const save = () => {
-  store.save();
-  sync();
-  if (S) {
-    const d = L.dashboard(S);
-    store.kvSet('widget_data', JSON.stringify({ done: d.doneHabits, total: d.habits.length, date: today() }));
-  }
-  nat.updateWidget?.();
-};
+/* App blocker: tell the Android service which apps are unlocked (and until when). Cheap, so it runs on every save. */
+let lastBlocksJson = null, blockerSt = { enabled: false }, appCache = null;
+function pushBlocks(force) {
+  if (!nat.blockerAvailable) return;
+  const payload = L.blockPayload(S), j = JSON.stringify(payload);
+  if (!force && j === lastBlocksJson) return; lastBlocksJson = j; nat.blockerSetRules(payload);
+}
+async function loadBlocker() { if (!nat.blockerAvailable) return; blockerSt = { enabled: !!(await nat.blockerStatus())?.enabled }; if (tab === 'settings') render(); }
+const save = () => { store.save(); sync(); pushBlocks(); };
 
 /* ---------- engine hooks ---------- */
 let celebrated = false, pendingUndo = null;
@@ -113,14 +114,13 @@ function habitStripItem(h) {
 const hud = () => { const li = L.levelInfo(S); return `<button class="coin-pill hud" data-a=lvinfo aria-label="Level ${li.lv}, ${S.coins || 0} coins. How levels work">Lv ${li.lv} · 🪙 ${S.coins || 0}</button>`; };
 function taskRow(k) {
   const od = overdue(k), rn = run(k), t = today();
-  const timeStr = k.time ? (k.timeTo ? `${k.time} - ${k.timeTo}` : k.time) : '';
-  const remStr = k.reminder ? ' 🔔' : '';
-  const dm = k.due === t ? (od ? 'Overdue' + (timeStr ? ' ' + timeStr : '') : 'Due today' + (timeStr ? ' ' + timeStr : '')) : k.due ? (od ? 'Overdue' : 'Due ' + k.due + (timeStr ? ' ' + timeStr : '')) : 'No deadline';
+  const dm = k.due === t ? (od ? 'Overdue since ' + k.time : 'Due today') : k.due ? (od ? 'Overdue since ' + (k.due === add(t, -1) ? 'yesterday' : k.due) : 'Due ' + k.due) : 'No deadline';
   const bonusTag = k.bonusCoins > 0 ? ` · +🪙 ${k.bonusCoins}` : '';
   const isDone = k.status === 'Completed', [sd, sn] = L.subProg(k);
-  const extra = (k.rec ? ' · 🔁' : '') + (sn ? ` · ☑ ${sd}/${sn}` : ''), tg = (k.tags || []).length ? `<div class=tags>${k.tags.map((x) => `<span class=tag>#${esc(x)}</span>`).join('')}</div>` : '';
-  return `<div class=row style="padding:5px 0"><button class="chk ${isDone ? 'done' : ''}" data-a=tc data-id=${k.id} ${isDone ? 'disabled' : ''} aria-label="${isDone ? 'Completed' : 'Complete'} ${esc(k.title)}">${isDone ? '✓' : ''}</button>
-  <div class=grow data-a=td data-id=${k.id} style="cursor:pointer"><div>${esc(k.title)}</div><div class="mu ${od ? 'dg' : ''}"><span class="pri-${k.pri}">${k.pri}</span>${bonusTag}${extra}${remStr} · ${dm}${od ? ' ⚠' : ''}</div>${tg}</div>${rn ? `<span class="pill ok" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</div>`;
+  const extra = (k.rec ? ' · 🔁 Repeats' : '') + (sn ? ` · ☑ steps · ${sd}/${sn}` : ''), tg = (k.tags || []).length ? `<div class=tags>${k.tags.map((x) => `<span class=tag>#${esc(x)}</span>`).join('')}</div>` : '';
+  const pri = String(k.pri || 'Medium').toLowerCase();
+  return `<article class="row task-row ${isDone ? 'is-done' : ''} ${od ? 'is-overdue' : ''}"><button class="chk task-check ${isDone ? 'done' : ''}" data-a=tc data-id=${k.id} ${isDone ? 'disabled' : ''} aria-label="${isDone ? 'Completed' : 'Complete'} ${esc(k.title)}">${isDone ? '✓' : ''}</button>
+  <div class="task-copy grow" data-a=td data-id=${k.id} style="cursor:pointer"><div class=task-title>${esc(k.title)}<span class="priority-badge priority-${pri}">${esc(k.pri || 'Medium')}</span></div><div class="task-meta ${od ? 'dg' : ''}">${esc(dm)}${k.time && !(od && k.due === t) ? ' · ' + esc(k.time) : ''}${extra}${bonusTag}</div>${tg}</div>${rn ? `<span class="pill ok task-timer" role=button tabindex=0 data-a=td data-id=${k.id} data-tick=${k.id} aria-label="Timer running for ${esc(k.title)}. Open task">${clock(el(k))}</span>` : ''}</article>`;
 }
 
 /* ---------- views ---------- */
@@ -161,15 +161,15 @@ function vToday() {
     }
   }
 
-  const wkCoins = L.weekReview(S, 0).earned, li = L.levelInfo(S);
-  const lvlCard = `<button class=lvlcard data-a=lvinfo aria-label="Level ${li.lv}, how levels work"><div class="row sp"><b>Level ${li.lv} · ${li.name}</b><span class=mu>${li.b - li.earned} coins to level ${li.lv + 1}</span></div>${bar(li.into, li.span)}</button>`;
-  return `<div class="row sp ph"><h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h1>${hud()}</div>
-  ${lvlCard}<div class=tiles><button class=tile data-a=tab data-id=rewards><div class=mu>Coins earned</div><div class="num tv am">${wkCoins}</div><div class=mu>this week</div></button><button class=tile data-a=tab data-id=tasks><div class=mu>Tasks pending</div><div class="num tv">${openTasks.length}</div><div class="mu ${over.length ? 'dg' : ''}">${over.length ? over.length + ' overdue' : 'none overdue'}</div></button></div>
+  const wkCoins = L.weekReview(S, 0).earned, li = L.levelInfo(S), date = L.P(t);
+  const lvlCard = `<button class="lvlcard today-level" data-a=lvinfo aria-label="Level ${li.lv}, how levels work"><div class="row sp"><b>Lv ${li.lv} &nbsp;${esc(li.name)}</b><span class=mu>${li.b - li.earned} to Lv ${li.lv + 1}</span></div>${bar(li.into, li.span)}</button>`;
+  return `<div class="row sp ph today-head"><div><div class=today-date>${date.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase()}</div><h1>Today</h1></div>${hud()}</div>
+  ${lvlCard}<div class="tiles today-tiles"><button class="tile tile-coins" data-a=tab data-id=rewards><div class=tile-label>Coins earned · this week</div><div class="num tv">${wkCoins}</div></button><button class="tile tile-pending" data-a=tab data-id=tasks><div class=tile-label>Tasks pending</div><div class="num tv">${openTasks.length}</div><div class="overdue-counter ${over.length ? '' : 'none'}">${over.length ? over.length + ' overdue' : 'none overdue'}</div></button></div>
   ${d.asks.map((h) => `<div class=card><b>${esc(h.name)}</b> missed its period. Reset milestone progress?<div class=row style="margin-top:10px"><button class="btn sm" data-a=rs data-id=${h.id}>Reset</button><button class="btn sm out" data-a=keep data-id=${h.id}>Keep progress</button></div></div>`).join('')}
-  <div class=lbl style="margin-top:6px">Habits · ${d.doneHabits} of ${d.habits.length} done today</div>
+  <div class="lbl section-kicker">// Habits · ${d.doneHabits} of ${d.habits.length}</div>
   ${d.habits.length ? `<div class="habit-strip">${d.habits.map(habitStripItem).join('')}</div>` : '<div class=card style="text-align:center;padding:10px"><div class=mu>No habits scheduled today</div><br><button class="btn sm" data-a=nh>Add habit</button></div>'}
-  <div class=lbl style="margin-top:6px">Tasks · ${dueToday.length} due today, ${over.length} overdue</div>
-  <div class="card scrollbox">${tasksContent}${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
+  <div class="lbl section-kicker">// Tasks · ${dueToday.length} due · ${over.length} overdue</div>
+  <div class="card scrollbox today-task-panel">${tasksContent}${d.doneTasks ? `<div class=mu style="margin-top:8px">✓ Done today: ${d.doneTasks}</div>` : ''}</div>`;
 }
 function vHabits() {
   const l = S.habits.filter((h) => !h.archived && h.name.toLowerCase().includes(q.toLowerCase())), ar = S.habits.filter((h) => h.archived);
@@ -179,7 +179,7 @@ function vHabits() {
   ${ar.length ? `<div class=lbl>Archived</div>${ar.map((h) => `<div class="card row sp"><span>${esc(h.name)}</span><button class="btn sm out" data-a=unarch data-id=${h.id}>Restore</button></div>`).join('')}` : ''}</div>`;
 }
 function vTasks() {
-  const quick = `<div class=row style="margin-bottom:10px;gap:8px"><input type=text id=qa maxlength=160 value="${esc(qaVal)}" placeholder='Quick add: Call mom tomorrow' aria-label="Quick add task"><button class="btn sm" data-a=qa style="flex:none">Add</button></div>`;
+  const quick = `<div class="row quick-add"><input type=text id=qa maxlength=160 value="${esc(qaVal)}" placeholder='Quick add: Call mom tomorrow' aria-label="Quick add task"><button class="btn sm" data-a=qa>Add</button></div>`;
   const tv = `<div class="seg slim" id=tvseg>${[['list', 'List'], ['cal', 'Calendar']].map(([v, n]) => `<label><input type=radio name=tv value=${v} ${tview === v ? 'checked' : ''}>${n}</label>`).join('')}</div>`;
   if (tview === 'cal') return `<div class="row sp ph"><h1>Tasks</h1>${hud()}</div>${quick}${tv}<div class="scrollbox fabpad">${vCal()}</div>`;
   const tags = L.allTags(S); if (tagF && !tags.includes(tagF)) tagF = '';
@@ -188,10 +188,10 @@ function vTasks() {
   const tagChips = tags.length ? `<span class=sepv></span>${tags.map((t) => `<button type=button class="chip ${tagF === t ? 'on' : ''}" data-a=tg data-id="${esc(t)}" aria-pressed=${tagF === t}>#${esc(t)}</button>`).join('')}` : '';
   const sortSel = `<select name=sort aria-label="Sort tasks" class=sortsel>${[['due', 'Due date'], ['pri', 'Priority'], ['recent', 'Recent']].map(([v, n]) => `<option value=${v} ${sortBy === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
   const empty = q || tagF || fil !== 'open' ? '<div class=empty><div class=ei>🔍</div>No tasks match.</div>' : '<div class=empty><div class=ei>✨</div>No open tasks.<br>Type one in the quick-add bar above.</div>';
-  return `<div class="row sp ph"><h1>Tasks</h1>${hud()}</div>${quick}${tv}
-  <div class=row style="gap:8px;margin-bottom:8px"><input type=text id=q placeholder="Search tasks" value="${esc(q)}" aria-label="Search tasks"${''}>${sortSel}</div>
-  <div class=chips id=fil>${chips}${tagChips}</div>
-  <div class="card scrollbox fabpad">${l.map(taskRow).join('') || empty}</div>`;
+  return `<div class="row sp ph page-head"><h1>Tasks</h1>${hud()}</div>${quick}${tv}
+  <div class="row task-tools"><input type=text id=q placeholder="Search tasks" value="${esc(q)}" aria-label="Search tasks">${sortSel}</div>
+  <div class="chips task-filters" id=fil>${chips}${tagChips}</div>
+  <div class="card scrollbox fabpad task-panel">${l.map(taskRow).join('') || empty}</div>`;
 }
 function vCal() {
   const t = today(), m0 = calM || L.monthStart(t), ws = S.settings.weekStart, first = L.wk(m0, ws), end = L.monthEnd(m0), cells = [];
@@ -345,9 +345,8 @@ function fTask(k, preset) {
   const e = !!k, ms = k?.ms || {}, after = { reset: 'Reset to 0', carry: 'Carry over', add: 'Keep adding' }[ms.after] || 'Carry over', rec = k?.rec, rl = rec ? { day: 'Days', week: 'Weeks', month: 'Months' }[rec.u] : 'None';
   sheet(`<div class="row sp"><h2 class=num>${e ? 'Edit task' : 'New task'}</h2>${closeBtn}</div>
  ${fld('Title', `<input type=text name=title maxlength=100 value="${esc(k?.title || '')}">`)}<div class=lbl>Priority</div>${seg('pri', ['High', 'Medium', 'Low'], k?.pri || 'Medium')}
- <div class=row>${fld('Due date (optional)', `<input type=date name=due value="${k?.due || preset?.due || ''}">`)}${fld('From time', `<input type=time name=time value="${k?.time || ''}">`)}${fld('To time', `<input type=time name=timeTo value="${k?.timeTo || ''}">`)}</div>
- <label class=chip style="margin:-2px 0 10px"><input type=checkbox name=reminder ${k?.reminder ? 'checked' : ''}>🔔 Set reminder</label>
- <div class=chips style="margin:-2px 0 12px">${[['0', 'Today'], ['1', 'Tomorrow'], ['7', 'Next week'], ['x', 'No date']].map(([v, n]) => `<button type=button class=chip data-a=qd data-id=${v}>${n}</button>`).join('')}</div>
+ <div class=row>${fld('Due date (optional)', `<input type=date name=due value="${k?.due || preset?.due || ''}">`)}${fld('Time (optional)', `<input type=time name=time value="${k?.time || ''}">`)}</div>
+ <div class=chips style="margin:-6px 0 12px">${[['0', 'Today'], ['1', 'Tomorrow'], ['7', 'Next week'], ['x', 'No date']].map(([v, n]) => `<button type=button class=chip data-a=qd data-id=${v}>${n}</button>`).join('')}</div>
  ${fld('Category', `<select name=cat>${L.allCats(S).map((c) => `<option value="${esc(c)}" ${(k ? k.cat === c : c === 'Personal') ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select><input type=text name=newcat maxlength=24 placeholder="Or create a new category" aria-label="New category" style="margin-top:8px">`)}
  <details class=more ${(k && (k.tags?.length || k.est || k.rec || k.bonusCoins || ms.mode === 'worklog' || ms.reward || ms.url)) ? 'open' : ''}><summary>More options · tags, repeat, estimate, rewards</summary>
  ${fld('Tags (comma separated)', `<input type=text name=tags maxlength=120 placeholder="home, errands" value="${esc((k?.tags || []).join(', '))}">`)}
@@ -376,7 +375,7 @@ function saveReward() {
 }
 function mkTask(f, ms) {
   const id = L.uid();
-  return { id, title: f.title, pri: f.pri || 'Medium', cat: f.cat || 'Personal', due: f.due || null, time: f.time || null, timeTo: f.timeTo || null, reminder: !!f.reminder, bonusCoins: f.bonusCoins || 0, tags: f.tags || [], est: f.est || 0, rec: f.rec || null, ...(f.rec ? { ser: id } : {}),
+  return { id, title: f.title, pri: f.pri || 'Medium', cat: f.cat || 'Personal', due: f.due || null, time: f.time || null, bonusCoins: f.bonusCoins || 0, tags: f.tags || [], est: f.est || 0, rec: f.rec || null, ...(f.rec ? { ser: id } : {}),
     status: 'Not Started', start: today(), mp: 0, fired: 0, sub: [], ms: ms || { mode: 'once', every: 5, after: 'reset', reward: '', url: '' } };
 }
 function saveTask(id) {
@@ -385,7 +384,7 @@ function saveTask(id) {
   const wl = val('mode') === 'Every work log', due = val('due') || null, ru = { Days: 'day', Weeks: 'week', Months: 'month' }[val('rep')];
   if (ru && !due) return toast('Repeating tasks need a due date');
   const rec = ru ? { u: ru, n: Math.min(365, Math.max(1, Math.round(+val('rn')) || 1)), days: ru === 'week' ? [...document.querySelectorAll('#sheet [name=rday]:checked')].map((i) => +i.value).sort() : [], dom: ru === 'month' ? +due.slice(8) : 0 } : null;
-  const fields = { title, pri: val('pri'), cat, due, time: due ? val('time') || null : null, timeTo: due ? val('timeTo') || null : null, reminder: chk('reminder'), bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
+  const fields = { title, pri: val('pri'), cat, due, time: due ? val('time') || null : null, bonusCoins: Math.max(0, Math.round(+val('bonusCoins')) || 0), tags: tagsOf(val('tags')), est: Math.max(0, Math.round(+val('est')) || 0), rec };
   const ms = { mode: wl ? 'worklog' : 'once', every: Math.max(0.25, +val('every') || 5), after: val('after') === 'Keep adding' ? 'add' : val('after') === 'Carry over' ? 'carry' : 'reset', reward: val('reward').trim(), url };
   const k = id && S.tasks.find((x) => x.id === id);
   if (k) {
@@ -401,11 +400,9 @@ function taskDetail(id) {
   const k = S.tasks.find((x) => x.id === id); if (!k) return; view = { task: id }; tab = 'task';
   const rn = run(k), paused = rn && !S.timers[id].run, ses = S.sessions.filter((s) => s.t === id).sort((a, b) => a.start - b.start);
   const ev = L.everySec(k), [sd, sn] = L.subProg(k), wsec = L.worked(S, k) + el(k);
-  const timeStr = k.time ? (k.timeTo ? `${k.time} - ${k.timeTo}` : k.time) : '';
-  const remStr = k.reminder ? ' 🔔 Remind me' : '';
   $('#tabs').hidden = true;
   lastTab = 'task'; setApp(`<div class=row><button class=ic data-a=back aria-label=Back>←</button><h1 class=grow style="font-size:24px;margin:0">${esc(k.title)}</h1>${hud()}</div>
-  <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (timeStr ? ' ' + timeStr : '') : 'No deadline'}${remStr ? ' · ' + remStr : ''} · ${k.status}${k.rec ? ' · 🔁 ' + L.recLabel(k.rec) : ''}</p>
+  <p class=mu><span class="pri-${k.pri}">${k.pri}</span> · ${esc(k.cat)} · ${k.due ? 'Due ' + k.due + (k.time ? ' ' + k.time : '') : 'No deadline'} · ${k.status}${k.rec ? ' · 🔁 ' + L.recLabel(k.rec) : ''}</p>
   ${(k.tags || []).length ? `<p class=mu style="margin-top:-8px">${k.tags.map((x) => '#' + esc(x)).join(' ')}</p>` : ''}
   <div class=card><div class="timer num" data-tick=${id} aria-live=off>${clock(el(k))}</div>${rn && S.timers[id].pomo ? `<div class=mu style="text-align:center;margin-bottom:8px" data-pomo=${id}>${pomoText(k)}</div>` : ''}<div class=row>
   ${k.status === 'Completed' ? '' : rn && S.timers[id].run ? `<button class="btn out" data-a=pause data-id=${id}>Pause</button><button class=btn data-a=stop data-id=${id}>Stop &amp; save</button>` : paused ? `<button class=btn data-a=resume data-id=${id}>Resume</button><button class="btn out" data-a=stop data-id=${id}>Stop &amp; save</button>` : `<button class=btn data-a=start data-id=${id}>Start</button><button class="btn out" data-a=startp data-id=${id}>🍅 Focus</button>`}</div></div>
@@ -457,14 +454,44 @@ function levelInfoHtml() {
   <ul class=ul><li>Complete a task: High 🪙 5 · Medium 🪙 3 · Low 🪙 2, plus any bonus you set</li><li>Log time on a task (timer or manual): 🪙 ${rate} per hour</li></ul>
   <p style="margin-bottom:0">You are <b>level ${li.lv} · ${li.name}</b> with 🪙 ${li.earned} earned, ${li.b - li.earned} more for level ${li.lv + 1}.</p>`;
 }
+function blockerCard() {
+  if (!nat.blockerAvailable) return '<p class=mu style="margin:0">App blocking is available in the Android app.</p>';
+  const rules = S.blocks.map((b) => {
+    const st = L.blockStatus(S, b);
+    return `<div class=card style="margin:0 0 10px;padding:12px"><div class="row sp" style="align-items:flex-start"><div class=grow><b>${esc(b.label)}</b>
+      <div class="mu ${st.unlocked ? 'ok' : 'dg'}" style="font-weight:600">${st.unlocked ? '🔓 Unlocked for today' : '🔒 Blocked · still to do: ' + esc(st.pending.join(', '))}</div>
+      <div class=mu>${b.mode === 'any' ? 'Any one of' : 'All of'}: ${esc(st.items.map((i) => i.name).join(', '))}</div></div><button class="btn sm out" data-a=bedit data-id=${b.id} style="flex:none">Edit</button></div></div>`;
+  }).join('');
+  return `<p class=mu style="margin-top:0">Block an app, for example YouTube, until you finish the habits or tasks you pick. It unlocks the moment they are done and locks again at midnight.</p>
+  <div class="row sp" style="margin-bottom:10px"><b class="${blockerSt.enabled ? 'ok' : 'am'}">${blockerSt.enabled ? '✓ Blocking is on' : 'Blocking is off'}</b>${blockerSt.enabled ? '' : '<button class="btn sm" data-a=bsvc style="flex:none">Turn on</button>'}</div>
+  ${blockerSt.enabled ? '' : '<p class=mu style="margin-top:0">In Android\'s Accessibility settings, open <b>Habit &amp; Task Tracker · App blocker</b> and switch it on. It only sees which app opens, never what is on your screen.</p>'}
+  ${rules}<button class="btn out" data-a=badd ${S.blocks.length >= L.BLOCK_MAX ? 'disabled' : ''}>+ Block an app</button>`;
+}
+async function fBlock(b) {
+  const e = !!b; let apps = [];
+  if (!e) {
+    sheet(`<div class="row sp"><h2 class=num>Block an app</h2>${closeBtn}</div><p class=mu>Loading your apps…</p>`);
+    if (!appCache) appCache = await nat.blockerApps();
+    apps = appCache.filter((a) => !S.blocks.some((x) => x.pkg === a.pkg));
+    if (!apps.length) { appCache = null; sheet(); return toast('No apps to add (or the app list could not be read)'); }
+  }
+  const sel = new Set((b?.items || []).map((i) => i.t + ':' + i.id)), habits = S.habits.filter((h) => !h.archived || sel.has('habit:' + h.id));
+  const tasks = S.tasks.filter((k) => isOpen(k) || sel.has('task:' + k.id)).slice(0, 100);
+  const chips = (list, t, name) => list.map((x) => `<label class=chip><input type=checkbox name=bi value="${t}:${x.id}" ${sel.has(t + ':' + x.id) ? 'checked' : ''}>${esc(name(x))}</label>`).join('') || '<span class=mu>None yet</span>';
+  sheet(`<div class="row sp"><h2 class=num>${e ? 'Edit blocked app' : 'Block an app'}</h2>${closeBtn}</div>
+   ${e ? `<p style="margin-top:0"><b>${esc(b.label)}</b></p>` : fld('App to block', `<select name=bapp>${apps.map((a) => `<option value="${esc(a.pkg)}">${esc(a.label)}</option>`).join('')}</select>`)}
+   <div class=lbl>Habits to do today</div><div>${chips(habits, 'habit', (h) => h.name)}</div>
+   <div class=lbl>Tasks to finish</div><div style="max-height:190px;overflow:auto">${chips(tasks, 'task', (k) => k.title)}</div>
+   <div class=lbl>Unlock when I finish</div>${seg('bmode', ['All of them', 'Any one of them'], b?.mode === 'any' ? 'Any one of them' : 'All of them')}
+   <button class=btn data-a=bsave data-id="${b?.id || ''}">${e ? 'Save changes' : 'Block this app'}</button>${e ? `<button class="btn danger" style="margin-top:10px" data-a=bdel data-id=${b.id}>Remove</button>` : ''}`);
+}
 function backupCard() {
   const stale = !lastBackup || Date.now() - lastBackup > 7 * 864e5, when = lastBackup ? new Date(lastBackup).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'never';
   return `<p class=mu style="margin-top:0">Save a copy of all your data to a folder in your own Google Drive and bring it back whenever you need it. You pick the folder yourself, right on this phone.</p>
   <p class=mu style="margin:0 0 12px">Last backup sent: <b class="${stale ? 'am' : ''}">${when}</b>${stale ? ' · a weekly backup is a good habit' : ''}</p>
   <button class=btn data-a=bk style="margin-bottom:10px">Back up now</button>
-  <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept="*/*" id=imp hidden></label>
-  <button class="btn out" data-a=pasterestore style="margin-bottom:10px">Paste backup JSON to restore</button>
-  <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file, or use <b>Paste backup JSON</b> for instant recovery. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
+  <label class="btn out" style="display:grid;place-items:center;margin-bottom:10px;cursor:pointer">Restore from a backup file<input type=file accept=".json,application/json" id=imp hidden></label>
+  <details class=more><summary>How it works</summary><ol class=ul style="padding-bottom:8px"><li><b>Back up:</b> tap Back up now, choose <b>Drive</b> in the share sheet, pick your folder and tap <b>Save</b>.</li><li><b>Restore:</b> tap Restore, open <b>Drive</b> in the file picker and choose your backup file. You can undo right afterwards.</li><li>The backup is a plain .json file, so you can also keep a copy anywhere else (Files, email, another phone).</li></ol></details>`;
 }
 function vSettings() {
   const n = S.settings.notif, days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -476,6 +503,7 @@ function vSettings() {
  ${sec('Appearance', `<div class=lbl style="margin-top:0">Theme</div>${seg('theme', ['system', 'light', 'dark'], S.theme)}${fld('Week starts on', `<select name=ws>${[1, 2, 3, 4, 5, 6, 0].map((i) => `<option value=${i} ${S.settings.weekStart === i ? 'selected' : ''}>${days[i]}</option>`).join('')}</select>`)}`)}
  ${sec('Coins for logged time', `${fld('Supercoins per hour logged on tasks', `<input type=number name=sc min=0 max=100 step=0.5 value="${S.settings.coinsPerHour ?? 2}">`)}<p class=mu style="margin:-4px 0 0">Timer and manual sessions both count. Part-hours add up, so 30 minutes at 2 per hour pays 1 coin. Set 0 to turn off.</p>`)}
  ${sec('Categories', `<div>${cats}</div><p class=mu style="margin:0 0 8px">The number is how many habits and tasks use it. Only your own, unused categories can be deleted.</p><div class=row style="gap:8px"><input type=text id=ncat maxlength=24 placeholder="New category name" aria-label="New category name"><button class="btn sm" data-a=addcat style="flex:none">Add</button></div>`)}
+ ${sec('App blocker', blockerCard())}
  ${sec('Notifications', `${c('nOn', 'Enable notifications', n.on)}<p class=mu>Android asks for permission when you turn this on. Reminders can arrive a few minutes late, so no exact-alarm permission is needed.</p>
  <div id=nopts class="${n.on ? '' : 'hide'}">${c('nDaily', 'Daily reminder', n.daily)}${c('nRisk', 'Habit at risk', n.risk)}${c('nDue', 'Task due soon', n.due)}${c('nTimer', 'Timer running 3h+', n.timer)}${c('nReward', 'Reward unlocked', n.reward)}
  ${fld('Daily reminder time', `<input type=time name=nTime value="${n.dailyTime}">`)}</div>`)}
@@ -517,16 +545,10 @@ async function applyImport(ns, label) {
   S = ns; L.evaluate(S); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); save(); render();
   toast('Data restored', () => { S = prev; theme(); save(); render(); });
 }
-const readFile = (file) => new Promise((res, rej) => {
-  const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.onerror = () => rej(fr.error || new Error('read failed')); fr.readAsText(file);
-});
-async function importFile(file, done) {
+async function importFile(file) {
   if (!file) return;
-  let text;
-  try { text = await readFile(file); } catch (e) { done?.(); return toast('Could not read that file: ' + (e?.message || 'unknown error')); }
-  done?.(); // safe to reset the picker now that the text is in memory
-  if (text.length > 50e6) return toast('File too large – nothing was changed');
-  let ns; try { ns = L.parseImport(text); } catch (e) { return toast('Not a valid backup (' + String(e?.message || e).replace(/^Invalid data: /, '') + ') – nothing was changed'); }
+  if (file.size > 50e6) return toast('File too large – nothing was changed');
+  let ns; try { ns = L.parseImport(await file.text()); } catch { return toast('Invalid file – nothing was changed'); }
   await applyImport(ns, 'this backup file');
 }
 function openHabitSheet(kind, id) { histLimit = 50; historySheet(kind, id); }
@@ -537,8 +559,6 @@ let lastTimerAct = -1e9;
 const timerBusy = () => { const n = performance.now(), busy = n - lastTimerAct < 600; if (!busy) lastTimerAct = n; return busy; };
 const A = {
   nr: () => fReward(), sr: () => saveReward(),
-  pasterestore: () => sheet(`<div class="row sp"><h2 class=num>Restore from JSON</h2>${closeBtn}</div><p class=mu>Paste your backup JSON text below to restore your data instantly.</p>${fld('Backup JSON content', '<textarea name=rawjson rows=8 placeholder="Paste JSON here..." style="width:100%;font-family:monospace;font-size:12px;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px"></textarea>')}<button class=btn data-a=dorestore>Restore data</button>`),
-  dorestore: async () => { const raw = document.querySelector('#sheet [name=rawjson]')?.value?.trim(); if (!raw) return toast('Please paste backup JSON'); try { const ns = L.parseImport(raw); await applyImport(ns, 'pasted backup text'); } catch (e) { toast('Invalid backup JSON: ' + (e?.message || e)); } },
   claimr: ({ id }) => { const r = byId('rewards', id); if (L.claimReward(S, r)) { save(); render(); toast(`Claimed "${r.name}" for 🪙 ${r.cost || 10}!`); } else { toast(`Not enough Supercoins! Need 🪙 ${r.cost || 10}`); } },
   tab: ({ id, e }) => { e.preventDefault(); tab = id; view = null; $('#tabs').hidden = false; render(); },
   x: () => sheet(), set: () => { tab = 'settings'; view = null; render(); }, nh: ({ e }) => { e.preventDefault(); fHabit(); }, nt: ({ e }) => { e.preventDefault(); fTask(undefined, tab === 'tasks' && tview === 'cal' && calSel ? { due: calSel } : undefined); },
@@ -606,6 +626,31 @@ const A = {
   /* habit notes + sharing */
   hnote: ({ h }) => { const lt = L.latestToday(S, h); if (!lt) return; L.setNote(S, lt.id, val('hnote'), val('mood')); save(); habitDetail(h.id); toast('Note saved'); },
   shr: async ({ h }) => { const r = await nat.shareText(h.name, `${h.ms.kind === 'streak' ? '🔥' : '🎯'} ${h.name}: ${h.prog} / ${h.ms.target} ${unit(h)} (best ${h.best}) · tracked with Habit & Task Tracker`); if (r === 'copied') toast('Copied to clipboard'); },
+  /* app blocker */
+  badd: () => fBlock(),
+  bedit: ({ id }) => { const b = S.blocks.find((x) => x.id === id); if (b) fBlock(b); },
+  bsvc: () => nat.blockerOpenSettings(),
+  bsave: ({ id }) => {
+    const b = id && S.blocks.find((x) => x.id === id);
+    const items = [...document.querySelectorAll('#sheet [name=bi]:checked')].map((i) => { const [t, ...r] = i.value.split(':'); return { t, id: r.join(':') }; });
+    if (!items.length) return toast('Pick at least one habit or task');
+    const mode = val('bmode') === 'Any one of them' ? 'any' : 'all';
+    if (b) {
+      if (!L.blockStatus(S, b).unlocked && !confirm(`${b.label} is blocked right now. Change its rule anyway?`)) return;
+      b.items = items; b.mode = mode;
+    } else {
+      const sel = document.querySelector('#sheet [name=bapp]'); if (!sel || !sel.value) return toast('Choose an app');
+      if (S.blocks.length >= L.BLOCK_MAX) return toast(`You can block up to ${L.BLOCK_MAX} apps`);
+      S.blocks.push({ id: L.uid(), pkg: sel.value, label: sel.selectedOptions[0].textContent.trim().slice(0, 80), mode, items });
+    }
+    save(); pushBlocks(true); sheet(); render();
+    toast(blockerSt.enabled ? 'Saved' : 'Saved. Turn on the app blocker in Android settings to enforce it.');
+  },
+  bdel: ({ id }) => {
+    const b = S.blocks.find((x) => x.id === id); if (!b) return;
+    if (!confirm(L.blockStatus(S, b).unlocked ? `Stop blocking ${b.label}?` : `${b.label} is blocked right now. Remove the rule and unblock it?`)) return;
+    S.blocks = S.blocks.filter((x) => x !== b); save(); pushBlocks(true); sheet(); render();
+  },
   /* level info, categories, backup */
   lvinfo: () => sheet(`<div class="row sp"><h2 class=num>How levels work</h2>${closeBtn}</div>${levelInfoHtml()}`),
   addcat: () => { const c = L.addCat(S, $('#ncat')?.value); if (!c) return toast(`Enter a name (up to ${L.CAT_MAX} characters, up to ${L.CUSTOM_MAX} categories)`); save(); render(); toast(`Category “${c}” is ready to use`); },
@@ -618,7 +663,7 @@ const A = {
     lastBackup = Date.now(); store.kvSet('lastBackup', String(lastBackup)).catch(() => {}); if (tab === 'settings') render();
     toast('Backup file shared. Check that it saved in your Drive folder.');
   },
-  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); await store.kvRemove('lastBackup'); lastBackup = 0; S = L.newState(); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
+  wipe: async () => { if (confirm('Delete everything? This cannot be undone.')) { await store.wipe(); await store.kvRemove('lastBackup'); lastBackup = 0; S = L.newState(); pushBlocks(true); theme(); tab = 'today'; view = null; $('#tabs').hidden = false; sheet(); nat.applyPlan([], false); render(); } },
 };
 document.addEventListener('click', (e) => {
   if (e.target.id === 'sheet') return sheet();
@@ -643,7 +688,7 @@ document.addEventListener('change', async (e) => {
   }
   if (N[n]) { S.settings.notif[N[n]] = t.checked; save(); }
   if (n === 'nTime' && /^\d{2}:\d{2}$/.test(t.value)) { S.settings.notif.dailyTime = t.value; save(); }
-  if (t.id === 'imp') { const f = t.files[0]; if (f) importFile(f, () => { t.value = ''; }); }
+  if (t.id === 'imp') { const f = t.files[0]; t.value = ''; importFile(f); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') sheet();
@@ -676,12 +721,14 @@ const overSig = () => S.tasks.filter(overdue).map((k) => k.id).join();
 function refresh() {
   if (L.evaluate(S)) store.save();
   lastKey = today() + '|' + L.tzKey(); lastOver = overSig();
+  appCache = null; loadBlocker(); pushBlocks();
   if (tab !== 'task') render(); sync();
 }
 nat.onAppState((active) => { if (active) refresh(); else store.flush(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) store.flush(); else refresh(); });
 addEventListener('pagehide', () => store.flush());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
+setInterval(pushBlocks, 60000); // unlock expiry follows the clock (midnight roll-over)
 const lastPomo = {};
 setInterval(() => {
   document.querySelectorAll('[data-tick]').forEach((n) => { const k = byId('tasks', n.dataset.tick); if (k) n.textContent = clock(el(k)); });
